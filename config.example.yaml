@@ -1,0 +1,101 @@
+# orangeguard configuration example.
+# Merge the `plugins` block into your CLIProxyAPI config.yaml. Everything under
+# plugins.configs.orangeguard except `enabled`/`priority` is read by the plugin.
+
+plugins:
+  enabled: true
+  dir: "~/.cli-proxy-api/plugins"
+  configs:
+    orangeguard:
+      enabled: true
+      # Higher runs first. Put orangeguard above other model routers so it can
+      # claim its virtual models and guarded models.
+      priority: 50
+      # Provider id the virtual models are listed under in /v1/models.
+      provider: orangeguard
+
+      # ------------------------------------------------------------------
+      # 1. Guard: detect upstream model substitution ("I asked for A, got B").
+      # ------------------------------------------------------------------
+      guard:
+        max_retries: 2          # extra same-model attempts after a substitution
+        retry_delay_ms: 200     # pause between those attempts
+        on_missing_model: accept  # accept | reject responses that name no model
+        models:
+          # Simplest form: the response must report gpt-6-astra (snapshot
+          # suffixes like gpt-6-astra-2026-08-01 are fine; gpt-5.5-mini or
+          # gpt-6-astra-mini are not).
+          - model: "gpt-6-astra"
+
+          # Alias whose upstream name is unrelated: list what is acceptable.
+          - model: "my-coder"
+            expect: ["glm-5.2", "glm-5.2-*"]
+            deny: ["*air*", "*flash*"]
+            max_retries: 3
+
+          # Globs work too: guard every Claude Opus model.
+          - model: "claude-opus-*"
+            deny: ["*haiku*", "*sonnet*"]
+
+      # ------------------------------------------------------------------
+      # Cooldown: how long a failing upstream model is skipped by virtual
+      # models. Seconds. Consecutive failures of the same kind back off by
+      # backoff_multiplier up to max_seconds; a success resets everything.
+      # ------------------------------------------------------------------
+      cooldown:
+        enabled: true
+        quota_seconds: 1800        # 402 / 429 insufficient_quota / usage limit
+        rate_limit_seconds: 60     # plain 429
+        auth_seconds: 600          # 401 / 403
+        not_found_seconds: 3600    # 404 model_not_found / no credentials for model
+        server_error_seconds: 30   # 5xx / timeouts, after server_error_threshold in a row
+        server_error_threshold: 2
+        mismatch_seconds: 600      # member served a substituted model
+        backoff_multiplier: 2
+        max_seconds: 21600
+        honor_retry_after: true    # use "resets_in_seconds", "retryDelay", "try again in 20m" ...
+
+      # ------------------------------------------------------------------
+      # 2. Virtual models: merge several upstream models under one name.
+      # ------------------------------------------------------------------
+      virtual_models:
+        - name: "astra-auto"
+          # fallback (in order) | round-robin | random | weighted
+          strategy: fallback
+          # soonest: if every member is cooling, try the one that recovers
+          #          first (default). fail: answer 429 immediately.
+          when_all_cooling: soonest
+          # Try at most this many upstream attempts per request (0 = all members).
+          max_attempts: 0
+          # Also fail over on plain 4xx errors (e.g. context too long on a
+          # small member). Off by default.
+          failover_on_client_error: false
+          # Check every member's processing model even without a guard rule.
+          guard: true
+          members:
+            - model: "gpt-6-astra"
+            - model: "claude-opus-5"
+            - model: "my-coder"      # guard.models rule above applies
+              max_retries: 1         # extra attempts on this member after a substitution
+          # Published in /v1/models so agents see a real context window,
+          # modalities and reasoning controls. Declare the lowest common
+          # denominator of the members.
+          capabilities:
+            display_name: "Astra Auto"
+            description: "gpt-6-astra with Claude / GLM fallback"
+            context_length: 200000
+            max_output_tokens: 32000
+            input_modalities: [text, image]   # or `vision: true`
+            output_modalities: [text]
+            supported_parameters: [tools, tool_choice, temperature, max_tokens, reasoning_effort]
+            thinking:
+              levels: [low, medium, high]
+
+        - name: "cheap-pool"
+          strategy: weighted
+          members:
+            - { model: "deepseek-v4", weight: 3 }
+            - { model: "kimi-k3", weight: 1 }
+          capabilities:
+            context_length: 128000
+            max_output_tokens: 8192
