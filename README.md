@@ -188,6 +188,40 @@ curl -X POST -H "Authorization: Bearer <management-key>" \
 [debug] orangeguard: skipping cooling members | requested=smart skipped=quota-model,gpt-6-astra
 ```
 
+## 与 key-billing 配合使用
+
+计费用 [woyin/cpa-plugin-key-billing](https://github.com/woyin/cpa-plugin-key-billing)（[haowang02/cpa-plugin-key-billing](https://github.com/haowang02/cpa-plugin-key-billing) 的 fork，默认放行未定价模型，并自动刷新 models.dev 参考价）。两个插件**分别编译、分别安装**，放进同一个插件目录即可：
+
+```text
+plugins/<goos>/<goarch>/orangeguard.so
+plugins/<goos>/<goarch>/cpa-key-billing.so
+```
+
+```yaml
+plugins:
+  enabled: true
+  dir: "plugins"
+  configs:
+    orangeguard:
+      enabled: true
+      priority: 50
+      # ... guard / cooldown / virtual_models，见上文
+    cpa-key-billing:
+      enabled: true
+      state_file: "plugins/cpa-key-billing-state-v1.db"
+      unpriced_models: allow             # 虚拟模型本身没有价格，必须放行
+      reference_price_refresh_hours: 24
+      sync_custom_prices_from_reference: true
+```
+
+不要把两个插件合并成一个：cpa 在插件发起的嵌套调用中会跳过**发起方插件自己的**拦截器。两者分开时，key-billing 能对 OrangeGuard 请求的每个成员模型正常做额度、模型权限和凭证路由检查；合并后这些检查会被跳过。
+
+计费行为（cpa v7.3.17 实测，两个插件同时加载）：
+
+- 请求虚拟模型（如 `smart`）会被放行，按**实际处理请求的成员模型**的价格记账，不会为虚拟模型名单独记一笔，也不会重复计费。虚拟模型名本身不需要定价。
+- **重试和切换产生的每一次上游调用都会计费**，包括被 Guard 判定为降级而丢弃的那次、以及切换前失败的成员。cpa 会把每次上游调用都交给计费插件，插件无法区分。受保护模型的 `max_retries` 越大，被降级时用户付出的越多。
+- 被降级的那次调用按**请求的模型**（如 `gpt-6-astra`）计价，而不是实际返回的降级模型。
+
 ## 已知局限
 
 - **非流式重试会烧 token**：要读完整个响应体才知道处理模型。流式在第一个事件就能判定，成本很低。`max_retries` 不宜过大。
