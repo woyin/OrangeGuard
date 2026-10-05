@@ -32,6 +32,24 @@
 
 ## 安装
 
+### 从 cpa 插件商店安装（推荐）
+
+1. 在 cpa 的 `config.yaml` 里加入本仓库的商店源：
+
+   ```yaml
+   plugins:
+     enabled: true
+     store-sources:
+       - https://raw.githubusercontent.com/woyin/OrangeGuard/main/registry.json
+   ```
+
+2. 在管理中心的插件商店里找到 **OrangeGuard**，点安装。cpa 会从本仓库最新的 GitHub Release 下载对应平台的包、校验 `checksums.txt`、放到 `plugins/<goos>/<goarch>/orangeguard-v<版本>.so`，并在配置里写好 `enabled: true`。
+3. 在 `plugins.configs.orangeguard` 下添加规则（见下文「配置」），或在管理中心的插件配置页修改。以后在商店里点"更新"即可升级。
+
+Release 由推送 `v*` tag 触发：Linux 版在 `golang:1.26-bookworm` 中编译，并校验所需 glibc 不高于官方 cpa 镜像的 2.36。
+
+### 手动构建
+
 需要带插件支持（CGO 构建）的 cpa，验证：
 
 ```bash

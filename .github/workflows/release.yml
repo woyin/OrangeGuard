@@ -9,8 +9,46 @@ permissions:
 
 env:
   PLUGIN_ID: orangeguard
+  # Linux plugins must load inside the official cpa image (Debian bookworm,
+  # glibc 2.36), so they are built in the matching Go image, never on the
+  # newer glibc of the hosted Ubuntu runners.
+  LINUX_BUILD_IMAGE: golang:1.26-bookworm
+  MAX_GLIBC: "2.36"
 
 jobs:
+  build-linux:
+    name: build linux/${{ matrix.goarch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest, goarch: amd64 }
+          - { runner: ubuntu-24.04-arm, goarch: arm64 }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test and build in ${{ env.LINUX_BUILD_IMAGE }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          docker run --rm -v "$PWD:/src" -w /src -e GOFLAGS=-buildvcs=false "$LINUX_BUILD_IMAGE" bash -euc "
+            go test ./...
+            CGO_ENABLED=1 go build -buildmode=c-shared \
+              -ldflags '-X main.pluginVersion=${version}' -o staging/${PLUGIN_ID}.so .
+            rm -f staging/*.h
+            chown -R $(id -u):$(id -g) staging"
+      - name: Check glibc requirement
+        run: |
+          need="$(objdump -T "staging/${PLUGIN_ID}.so" | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -V | tail -1)"
+          echo "highest glibc symbol version: ${need}"
+          if [ "$(printf '%s\n%s\n' "$need" "$MAX_GLIBC" | sort -V | tail -1)" != "$MAX_GLIBC" ]; then
+            echo "plugin needs glibc ${need}, newer than ${MAX_GLIBC} in the cpa image"; exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lib-linux-${{ matrix.goarch }}
+          path: staging/${{ env.PLUGIN_ID }}.so
+          if-no-files-found: error
+
   build:
     name: build ${{ matrix.goos }}/${{ matrix.goarch }}
     runs-on: ${{ matrix.runner }}
@@ -20,11 +58,9 @@ jobs:
       # artifact is built on a runner of its own OS and architecture.
       matrix:
         include:
-          - { runner: ubuntu-latest,    goos: linux,   goarch: amd64, ext: so }
-          - { runner: ubuntu-24.04-arm, goos: linux,   goarch: arm64, ext: so }
-          - { runner: macos-15-intel,   goos: darwin,  goarch: amd64, ext: dylib }
-          - { runner: macos-latest,     goos: darwin,  goarch: arm64, ext: dylib }
-          - { runner: windows-latest,   goos: windows, goarch: amd64, ext: dll }
+          - { runner: macos-15-intel, goos: darwin, goarch: amd64, ext: dylib }
+          - { runner: macos-latest, goos: darwin, goarch: arm64, ext: dylib }
+          - { runner: windows-latest, goos: windows, goarch: amd64, ext: dll }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -47,7 +83,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: build
+    needs: [build-linux, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -56,8 +92,8 @@ jobs:
         with:
           path: libs
           pattern: lib-*
-      # Plugin-store layout: <pluginID>_<version>_<goos>_<goarch>.zip holding
-      # only the library at the root, plus SHA256 checksums.txt.
+      # Plugin-store layout read by cpa: <pluginID>_<version>_<goos>_<goarch>.zip
+      # holding only the library at the zip root, plus a sha256 checksums.txt.
       - name: Package
         shell: bash
         run: |
@@ -70,6 +106,8 @@ jobs:
             ( cd "$(dirname "$lib")" && zip -q -X "$GITHUB_WORKSPACE/release/${PLUGIN_ID}_${version}_${goos}_${goarch}.zip" "$(basename "$lib")" )
           done
           ( cd release && sha256sum *.zip > checksums.txt )
+          ls -la release
+          cat release/checksums.txt
       - uses: softprops/action-gh-release@v2
         with:
           files: release/*

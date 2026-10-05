@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "plugins": [
+    {
+      "id": "orangeguard",
+      "name": "OrangeGuard",
+      "description": "Blocks silent upstream model substitution and merges models into virtual models with fallback, round-robin, random or weighted routing, quota-aware cooldowns and declared capabilities.",
+      "author": "woyin",
+      "repository": "https://github.com/woyin/OrangeGuard",
+      "homepage": "https://github.com/woyin/OrangeGuard",
+      "tags": ["routing", "fallback", "guard", "virtual-models"]
+    }
+  ]
+}
