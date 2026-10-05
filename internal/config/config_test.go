@@ -122,11 +122,13 @@ func TestDefaultGuardModelsAreReplacedNotMerged(t *testing.T) {
 	if len(cfg.Guard.Models) != len(DefaultGuardModels()) || !cfg.Monitor.Enabled {
 		t.Fatalf("defaults: %+v", cfg.Guard.Models)
 	}
-	if _, ok := cfg.FindGuard("gpt-6-astra"); !ok {
-		t.Fatal("OpenAI models must be guarded by default")
+	for _, name := range []string{"gpt-6-astra", "openai/gpt-5", "cline-pass/deepseek-v4.1-flash", "deepseek-chat", "deepseek-reasoner", "z-ai/glm-4.5", "glm-4.7-flashx"} {
+		if _, ok := cfg.FindGuard(name); !ok {
+			t.Errorf("%q must be guarded by default", name)
+		}
 	}
 	if _, ok := cfg.FindGuard("claude-opus-5"); ok {
-		t.Fatal("non-OpenAI models must not be guarded by default")
+		t.Fatal("Claude must remain opt-in by default")
 	}
 	cfg, _, _ = Parse([]byte("guard:\n  models:\n    - model: glm-5.2\n"))
 	if len(cfg.Guard.Models) != 1 || cfg.Guard.Models[0].Model != "glm-5.2" {

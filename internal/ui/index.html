@@ -347,7 +347,7 @@ function modelMeta(id) {
   }
   return chips;
 }
-function guardRuleFor(id, cfg) { return (cfg.guard.models || []).find((r) => glob(r.model, id)); }
+function guardRuleFor(id, cfg) { return (cfg.guard.models || []).find((r) => glob(r.model, id) || (!r.model.includes("/") && glob(r.model, id.split("/").pop()))); }
 function cooldownOf(id) { return (state.status?.cooldowns || []).find((c) => lower(c.model) === lower(id) && c.cooling_down); }
 function cooldownChip(id) {
   const c = cooldownOf(id);
@@ -592,11 +592,11 @@ function renderGuard() {
     for (const m of realModels()) names.set(lower(m.id), m.id);
     for (const s of state.status.monitor || []) if (!names.has(lower(s.model))) names.set(lower(s.model), s.model);
     let list = [...names.values()].map((id) => ({ id, rule: guardRuleFor(id, cfg), stat: monitor.get(lower(id)) }));
-    if (state.filter) list = list.filter((x) => lower(x.id).includes(lower(state.filter)));
+    if (state.filter) list = list.filter((x) => [x.id, ...(x.stat?.aliases || [])].some((name) => lower(name).includes(lower(state.filter))));
     if (state.onlyMismatch) list = list.filter((x) => x.stat && x.stat.mismatches);
     list.sort((a, b) => ((b.stat?.mismatches || 0) - (a.stat?.mismatches || 0)) || ((b.stat?.requests || 0) - (a.stat?.requests || 0)) || a.id.localeCompare(b.id));
     return list.map(({ id, rule, stat }) => h("tr", {},
-      h("td", {}, h("div", { class: "mono" }, id), h("div", { class: "row" }, modelMeta(id))),
+      h("td", {}, h("div", { class: "mono" }, id), ...(stat?.aliases || []).map((alias) => h("div", { class: "hint mono" }, "客户端请求名：" + alias)), h("div", { class: "row" }, modelMeta(id))),
       h("td", {}, rule ? h("span", { class: "chip accent", title: "规则 " + rule.model }, "受保护 · " + rule.model) : h("span", { class: "chip" }, "仅监控")),
       h("td", { class: "num" }, stat ? stat.requests : "—"),
       h("td", { class: "num" }, stat && stat.reported ? h("span", { class: "chip " + (stat.mismatches ? "bad" : "ok") }, (100 * stat.mismatch_rate).toFixed(stat.mismatches ? 1 : 0) + "%") : "—"),
@@ -617,7 +617,7 @@ function renderGuard() {
         h("tbody", {}, g.models.length ? g.models.map(ruleRow) : h("tr", {}, h("td", { colspan: "5", class: "empty" }, "没有规则：所有模型只监控，不拦截"))))),
       h("div", { class: "actions" },
         h("button", { class: "btn", onclick: () => { g.models.push({ model: "" }); draw(); } }, "+ 添加规则"),
-        h("button", { class: "btn", onclick: () => { const have = new Set(g.models.map((r) => lower(r.model))); for (const pat of ["gpt-*", "chatgpt-*", "o1*", "o3*", "o4*"]) if (!have.has(pat)) g.models.push({ model: pat }); draw(); } }, "加入 OpenAI 默认规则"),
+        h("button", { class: "btn", onclick: () => { const have = new Set(g.models.map((r) => lower(r.model))); for (const pat of ["gpt-*", "chatgpt-*", "o1*", "o3*", "o4*", "deepseek-*", "glm-*"]) if (!have.has(pat)) g.models.push({ model: pat }); draw(); } }, "加入 OpenAI / DeepSeek / GLM 默认规则"),
         h("div", { class: "spacer" }),
         h("button", { class: "btn primary", onclick: async (e) => {
           if (g.models.some((r) => !r.model)) return toast("规则的模型不能为空", true);

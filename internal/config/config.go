@@ -73,10 +73,8 @@ type MonitorConfig struct {
 	Enabled bool `yaml:"enabled" json:"enabled"`
 }
 
-// DefaultGuardModels protects the OpenAI families out of the box. Each rule
-// expects the requested name itself (snapshot suffixes allowed), so
-// gpt-6-astra answered by gpt-5.5-mini is caught while gpt-5-mini requested
-// and served as gpt-5-mini passes.
+// DefaultGuardModels protects OpenAI, DeepSeek and GLM model identities.
+// Family globs select requests; they do not accept every model in that family.
 func DefaultGuardModels() []GuardRule {
 	return []GuardRule{
 		{Model: "gpt-*"},
@@ -84,6 +82,8 @@ func DefaultGuardModels() []GuardRule {
 		{Model: "o1*"},
 		{Model: "o3*"},
 		{Model: "o4*"},
+		{Model: "deepseek-*"},
+		{Model: "glm-*"},
 	}
 }
 
@@ -402,7 +402,7 @@ func (c Config) FindGuard(name string) (GuardRule, bool) {
 		return GuardRule{}, false
 	}
 	for _, rule := range c.Guard.Models {
-		if Glob(rule.Model, name) {
+		if ModelGlob(rule.Model, name) {
 			return rule, true
 		}
 	}
@@ -498,6 +498,22 @@ func Glob(pattern, name string) bool {
 		pi++
 	}
 	return pi == len(p)
+}
+
+// ModelName removes routing namespaces (provider/model or models/model).
+// It deliberately preserves version, tier and mode suffixes.
+func ModelName(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		name = name[i+1:]
+	}
+	return name
+}
+
+// ModelGlob also applies unqualified patterns to the model ID inside a routing
+// namespace. Qualified patterns remain literal so channel-specific rules work.
+func ModelGlob(pattern, name string) bool {
+	return Glob(pattern, name) || (!strings.Contains(pattern, "/") && Glob(pattern, ModelName(name)))
 }
 
 // HasWildcard reports whether pattern contains glob metacharacters.

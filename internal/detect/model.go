@@ -124,7 +124,7 @@ func (e Expectation) Check(actual string) Verdict {
 		return VerdictUnknown
 	}
 	for _, pattern := range e.Deny {
-		if config.Glob(pattern, actual) {
+		if config.ModelGlob(pattern, actual) {
 			return VerdictMismatch
 		}
 	}
@@ -134,7 +134,7 @@ func (e Expectation) Check(actual string) Verdict {
 	}
 	for _, pattern := range accept {
 		if config.HasWildcard(pattern) {
-			if config.Glob(pattern, actual) {
+			if config.ModelGlob(pattern, actual) {
 				return VerdictAccepted
 			}
 			continue
@@ -151,35 +151,40 @@ func (e Expectation) Check(actual string) Verdict {
 // Beyond case-insensitive equality it tolerates:
 //   - a version/date suffix appended upstream (gpt-6-astra -> gpt-6-astra-2026-08-01)
 //   - an alias prefix stripped by cpa (my-glm-5.2 -> glm-5.2)
-//   - a provider prefix added upstream (gpt-6-astra -> openai/gpt-6-astra)
+//   - routing namespaces on either side (channel/model -> provider/model)
 //
 // Every relaxation requires a separator at the boundary, and an appended
 // suffix must look like a snapshot/date, so gpt-6-astra never matches
 // gpt-6-astra-mini and gpt-5 never matches gpt-5.5-mini.
 func Matches(expected, actual string) bool {
-	exp := strings.ToLower(strings.TrimSpace(expected))
-	act := strings.ToLower(strings.TrimSpace(actual))
+	exp := config.ModelName(expected)
+	act := config.ModelName(actual)
 	if exp == "" || act == "" {
 		return false
 	}
 	if exp == act {
 		return true
 	}
-	// Provider prefix on the actual name: "openai/gpt-6-astra".
-	if i := strings.LastIndex(act, "/"); i >= 0 && !strings.Contains(exp, "/") {
-		if Matches(exp, act[i+1:]) {
-			return true
-		}
-	}
 	// Version/date suffix appended upstream.
 	if strings.HasPrefix(act, exp) && isSuffixBoundary(act[len(exp)]) && isVersionSuffix(act[len(exp)+1:]) {
 		return true
 	}
 	// Alias prefix stripped: expected "my-glm-5.2", actual "glm-5.2".
-	if strings.HasSuffix(exp, act) && isBoundary(exp[len(exp)-len(act)-1]) {
+	// Do not mistake tier/mode fragments (mini, flash, reasoner) for aliases.
+	if knownModel(act) && strings.HasSuffix(exp, act) && isBoundary(exp[len(exp)-len(act)-1]) {
 		return true
 	}
 	return false
+}
+
+func knownModel(name string) bool {
+	for _, prefix := range []string{"gpt-", "chatgpt-", "deepseek-", "glm-", "claude-", "gemini-"} {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return name == "o1" || name == "o3" || name == "o4" ||
+		strings.HasPrefix(name, "o1-") || strings.HasPrefix(name, "o3-") || strings.HasPrefix(name, "o4-")
 }
 
 func isBoundary(c byte) bool {
@@ -201,9 +206,13 @@ func isVersionSuffix(suffix string) bool {
 		return false
 	}
 	digits := 0
-	for _, part := range strings.FieldsFunc(suffix, func(r rune) bool {
+	parts := strings.FieldsFunc(suffix, func(r rune) bool {
 		return r == '-' || r == '_' || r == '.' || r == ':' || r == '@'
-	}) {
+	})
+	if len(parts) == 0 {
+		return false
+	}
+	for _, part := range parts {
 		switch part {
 		case "latest", "preview", "exp", "experimental", "beta", "stable", "release":
 			continue

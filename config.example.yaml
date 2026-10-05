@@ -21,9 +21,14 @@ plugins:
         max_retries: 2          # extra same-model attempts after a substitution
         retry_delay_ms: 200     # pause between those attempts
         on_missing_model: accept  # accept | reject responses that name no model
-        # Without a models list the OpenAI families are protected by default
-        # (gpt-*, chatgpt-*, o1*, o3*, o4*). A list replaces the defaults;
-        # "models: []" protects nothing.
+        # Without a models list OpenAI, DeepSeek and GLM are protected by default
+        # (gpt-*, chatgpt-*, o1*, o3*, o4*, deepseek-*, glm-*), including
+        # channel/model requests. A list REPLACES defaults; this example opts
+        # into only the three rules below. "models: []" protects nothing.
+        # Matching ignores routing prefixes, NOT model versions or tiers:
+        # cline-pass/deepseek-v4.1-flash == deepseek/deepseek-v4.1-flash.
+        # Dynamic aliases (deepseek-chat/reasoner) need explicit expect when
+        # the channel returns a different ID; no permanent mapping is guessed.
         models:
           # Simplest form: the response must report gpt-6-astra (snapshot
           # suffixes like gpt-6-astra-2026-08-01 are fine; gpt-5.5-mini or

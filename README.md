@@ -122,7 +122,7 @@ plugins:
     orangeguard:
       enabled: true
       priority: 50
-      # guard.models 不写时默认保护 OpenAI 系列（见下文）
+      # guard.models 不写时默认保护 OpenAI / DeepSeek / GLM（见下文）
       virtual_models:
         - name: "astra-auto"
           strategy: fallback
@@ -145,7 +145,7 @@ plugins:
 | `max_retries` | `3` | 直接请求受保护模型时，检测到被替换后在同一模型上额外重试的次数 |
 | `retry_delay_ms` | `200` | 重试间隔 |
 | `on_missing_model` | `accept` | 响应里没有模型字段时：`accept` 放行（fail-open），`reject` 视为被替换 |
-| `models` | OpenAI 系列 | 防降级规则列表。**不写时默认为** `gpt-*`、`chatgpt-*`、`o1*`、`o3*`、`o4*`；写了就完全替换默认值；写 `[]` 表示不保护任何模型 |
+| `models` | OpenAI / DeepSeek / GLM | **不写时默认为** `gpt-*`、`chatgpt-*`、`o1*`、`o3*`、`o4*`、`deepseek-*`、`glm-*`，也匹配带渠道前缀的请求；写了就完全替换默认值；写 `[]` 表示不保护任何模型 |
 | `models[].model` | — | 客户端请求的模型名，支持 `*` `?` 通配 |
 | `models[].expect` | 请求的模型名 | 可接受的处理模型（字符串或列表，支持通配）。别名与上游名毫无字面关系时才需要写 |
 | `models[].deny` | — | 一律拒绝的处理模型（通配），优先级高于 `expect`，例如 `["*mini*", "*flash*"]` |
@@ -158,6 +158,9 @@ plugins:
 | `gpt-6-astra` | `gpt-6-astra` | ✅ | 相等 |
 | `gpt-6-astra` | `gpt-6-astra-2026-08-01` | ✅ | 日期/快照后缀（至少 3 位数字，或 `latest`/`preview` 等） |
 | `gpt-6-astra` | `openai/gpt-6-astra` | ✅ | 上游加了厂商前缀 |
+| `cline-pass/deepseek-v4.1-flash` | `deepseek/deepseek-v4.1-flash` | ✅ | 双方渠道前缀不同，模型 ID 相同 |
+| `deepseek-v4.1-pro` | `deepseek-v4.1-flash` | ❌ | 档位不同 |
+| `glm-4.5` | `glm-4.5-air` | ❌ | 档位不同 |
 | `my-glm-5.2` | `glm-5.2` | ✅ | cpa alias 前缀被剥离 |
 | `gpt-6-astra` | `gpt-5.5-mini` | ❌ | 降级 |
 | `gpt-6-astra` | `gpt-6-astra-mini` | ❌ | 后缀是档位名而不是版本 |
@@ -165,7 +168,13 @@ plugins:
 | `claude-opus-4` | `claude-opus-4-1` | ❌ | 短数字后缀视为另一个版本 |
 | `glm-5.2` | `glm-5.21` | ❌ | 没有分隔边界 |
 
-**为什么默认不保护所有模型**：被保护的请求由 OrangeGuard 接管执行，`count_tokens` 只能估算（Claude Code 依赖它管理上下文）；很多渠道上报的模型名与请求的不一致（alias、`models/` 前缀、内部名），全部保护容易误判成降级；重试也会计费。所以默认只保护 OpenAI 系列，其余模型由监控观察，按数据决定是否加入。
+**0.3.0 默认配置**：OpenAI、DeepSeek、GLM 均默认保护；每条规则仍期望请求的具体模型身份，**不是**允许同系列任意模型。全局额外重试 3 次、间隔 200ms；缺失模型字段默认 `accept`（未知，不算已验证），严格部署可设为 `reject`。其它模型仍由监控观察、按需启用：接管请求会影响 `count_tokens`（只能估算），重试也可能计费。
+
+普通名称比较会去掉双方最后一个 `/` 之前的渠道/厂商命名空间，保留版本和档位。不带 `/` 的规则/`expect`/`deny` 通配也匹配去前缀后的 ID；带 `/` 的通配保持字面匹配，便于限定渠道。`deny` 始终优先。任意业务 alias 请显式写 `expect`；仅保留 `my-glm-5.2 → glm-5.2` 这类可识别模型家族的前缀兼容，不把 `mini`、`flash`、`reasoner` 等片段视作模型身份。
+
+**动态别名不要猜**：DeepSeek 官方 `deepseek-chat` / `deepseek-reasoner` 的映射随版本发布变化；它们可能是同一基础模型的不同思考模式。默认只接受原名（含渠道前缀和快照），不硬编码成 V3/R1/V4，也不互相等同。若渠道确实返回另一个名称，按渠道实际映射配置精确 `expect`，不要写 `deepseek-*` 来掩盖换模。`chatgpt-*` 的滚动别名和 GLM 的渠道内部名也同理。
+
+**安全边界**：这是模型身份替换检测，不是模型能力排名；未知换模也会拦截，不能自动认定更高版本就是升级。响应字段只是上游声明，伪造字段或关闭 thinking 无法仅凭 `model` 检出。渠道若让 `/` 后的同名 ID 表示不同模型，应显式设置带渠道的 `expect` 通配以保持字面约束。
 
 ### 监控 `monitor`
 
@@ -173,9 +182,11 @@ plugins:
 |---|---|---|
 | `enabled` | `true` | 根据 cpa 用量记录统计每个上游模型：请求数、失败数、实际处理的模型及次数、降级率、最近一次降级 |
 
-统计只在内存中，cpa 重启后清零，最多记录 1000 个模型，每个模型保留最常见的 8 个实际模型名。
+统计只在内存中，cpa 重启后清零，最多记录 1000 个模型，每个模型保留最常见的 8 个实际模型名。监控以 cpa 用量记录的 `Model`（执行模型）聚合，页面同时显示 cpa 提供的 `Alias`（客户端请求名）。例如执行模型 `gpt-6.1-sol`、客户端请求名 `openai/gpt-6.1-sol`、响应声明 `gpt-6.1-sol` 是三个不同角色，不能混为一谈；比较时去命名空间不会改写请求路由或响应。若宿主未提供原始别名，监控无法仅从用量记录还原它。
 
-处理模型的读取位置：OpenAI 顶层 `model`、Claude `model` / `message_start.message.model`、OpenAI Responses `response.model`、Gemini `modelVersion`。读取的是 cpa 翻译后返回给客户端格式的响应。
+处理模型的读取位置：OpenAI Chat Completions、DeepSeek、GLM 的 JSON / SSE 顶层 `model`；Claude（含 DeepSeek Anthropic 兼容接口）的 `model` / `message_start.message.model`；OpenAI Responses 的非流式 `model` / 流式 `response.model`；Gemini 的 `modelVersion`（支持 JSON 数组流）。不把生成内容、`system_fingerprint`、`usage` 或任意深层 `model` 当作模型证据。读取的是 cpa 翻译后返回给客户端格式的响应，翻译可能丢失原始信息。
+
+协议与命名依据：[OpenAI Chat](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)、[OpenAI Responses](https://platform.openai.com/docs/api-reference/responses)、[DeepSeek Chat](https://api-docs.deepseek.com/api/create-chat-completion/)、[DeepSeek 模型与动态别名变更](https://api-docs.deepseek.com/updates/)、[GLM 对话补全（含响应与流式字段）](https://docs.bigmodel.cn/api-reference/模型-api/对话补全)。第三方渠道的自定义 ID（如 `deepseek-v4.1-flash`）按完整模型 ID 匹配，不依赖官方型号枚举。
 
 **上游真实错误**（4xx/5xx）在直接请求受保护模型时**原样透传**，不消耗重试预算（但会记入冷却表，供虚拟模型使用）。
 

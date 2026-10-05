@@ -29,6 +29,28 @@ func TestRecordAndSnapshot(t *testing.T) {
 	}
 }
 
+func TestClientRequestNamePreserved(t *testing.T) {
+	r := New(nil)
+	r.Record("gpt-6.1-sol", "openai/gpt-6.1-sol", "gpt-6.1-sol", false)
+	snap := r.Snapshot()
+	if len(snap) != 1 || snap[0].Model != "gpt-6.1-sol" || len(snap[0].Aliases) != 1 || snap[0].Aliases[0] != "openai/gpt-6.1-sol" || snap[0].Mismatches != 0 {
+		t.Fatalf("request alias must be preserved independently of upstream model: %+v", snap)
+	}
+	if len(snap[0].Served) != 1 || snap[0].Served[0].Model != "gpt-6.1-sol" {
+		t.Fatalf("reported model must not be rewritten to request alias: %+v", snap)
+	}
+}
+
+func TestNamespacedIdentity(t *testing.T) {
+	r := New(nil)
+	r.Record("cline-pass/deepseek-v4.1-flash", "", "deepseek/deepseek-v4.1-flash", false)
+	r.Record("cline-pass/deepseek-v4.1-flash", "", "deepseek/deepseek-v4-flash", false)
+	snap := r.Snapshot()
+	if len(snap) != 1 || snap[0].Reported != 2 || snap[0].Mismatches != 1 || snap[0].MismatchRate != 0.5 {
+		t.Fatalf("namespace change must not count as substitution: %+v", snap)
+	}
+}
+
 func TestBounds(t *testing.T) {
 	clock := time.Unix(1_800_000_000, 0)
 	r := New(func() time.Time { clock = clock.Add(time.Second); return clock })
