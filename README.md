@@ -49,6 +49,27 @@ make install    # 复制到 ~/.cli-proxy-api/plugins/<goos>/<goarch>/（用 INST
 
 插件 ID 取自文件名，所以动态库必须叫 `orangeguard.so`（或 `.dylib` / `.dll`），配置键为 `plugins.configs.orangeguard`。推送 `v*` tag 会通过 Release workflow 构建各平台的插件商店格式 zip。
 
+**cpa v8 必须显式启用**：v8 起，`plugins.configs` 里没有 `<id>: {enabled: true}` 的插件不会被加载（文件放进目录也没有任何日志）。
+
+### Docker 部署脚本
+
+[`deploy/install-cpa-plugins.sh`](deploy/install-cpa-plugins.sh) 用于官方 Docker 镜像部署的 cpa，一次安装或更新 orangeguard 和 [key-billing fork](https://github.com/woyin/cpa-plugin-key-billing)：
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/woyin/OrangeGuard/main/deploy/install-cpa-plugins.sh
+sudo CPA_DIR=/opt/cpa bash install-cpa-plugins.sh --dry-run   # 只检查与编译
+sudo CPA_DIR=/opt/cpa bash install-cpa-plugins.sh             # 安装 / 更新
+sudo bash install-cpa-plugins.sh --rollback /opt/cpa/backups/plugins-<时间>   # 回滚
+```
+
+- 通过挂载找到 `$CPA_DIR` 对应的容器、`config.yaml` 和插件目录。
+- 在 `golang:1.26-bookworm` 里编译，与官方镜像（Debian bookworm，glibc 2.36）及宿主机 CPU 架构一致；在更新的系统上直接编译的 `.so` 可能因 glibc 版本过高而无法加载。
+- 停止容器 → 备份 `config.yaml`、被替换的插件和计费数据库 → 原地替换已有的 `cpa-key-billing.so`（插件 ID 和数据库不变，原有 Key、计划、价格、用量都保留）→ 必要时在 `plugins.configs` 中加入 `orangeguard: {enabled: true}` → 启动容器。
+- 从 cpa 日志确认两个插件都已注册，失败则自动回滚。只用 `docker stop/start`，不会触发 compose 的 `pull_policy: always` 拉取新镜像。
+- 回滚会把 `config.yaml` 恢复到安装前的版本，之后对 orangeguard 规则的修改需要重新加上。
+
+已在 cpa v8.0.15 官方镜像上完整演练：安装、热加载 orangeguard 规则、防降级、虚拟模型切换与计费、回滚。
+
 ## 配置
 
 完整带注释的示例见 [`config.example.yaml`](config.example.yaml)。最小示例：
