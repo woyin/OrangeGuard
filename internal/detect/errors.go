@@ -64,6 +64,13 @@ func Classify(status int, message string) Kind {
 	if strings.Contains(m, "model_price_error") || strings.Contains(m, "has no configured price") {
 		return KindNotFound
 	}
+	// cpa drops the body of a response an interceptor plugin terminated and
+	// reports only "model execution failed with status N"; upstream failures
+	// always carry their own error text. For a nested member call the only
+	// such 503 key-billing produces is the missing-price refusal above.
+	if status == 503 && rePluginRefusal.MatchString(strings.TrimSpace(m)) {
+		return KindNotFound
+	}
 	quota := containsAny(m, quotaMarkers)
 	switch {
 	case status == 402:
@@ -121,11 +128,12 @@ func (k Kind) Failover(onClientError bool) bool {
 }
 
 var (
-	reSeconds    = regexp.MustCompile(`"?(?:resets?_in_seconds|retry_after_seconds|retry_after|retryafter|reset_seconds)"?\s*[:=]\s*"?(\d+(?:\.\d+)?)`)
-	reRetryDelay = regexp.MustCompile(`"?retrydelay"?\s*[:=]\s*"(\d+(?:\.\d+)?)s"`)
-	reRetryIn    = regexp.MustCompile(`(?:retry|try again|reset[s]?|available again)\s+(?:after|in)\s+(?:about\s+)?(\d+(?:\.\d+)?)\s*(ms|milliseconds?|s|secs?|seconds?|m|mins?|minutes?|h|hrs?|hours?)\b`)
-	reDuration   = regexp.MustCompile(`(?:retry|try again|reset[s]?)\s+(?:after|in)\s+((?:\d+h)?(?:\d+m)?(?:\d+(?:\.\d+)?s)?)\b`)
-	reResetsAt   = regexp.MustCompile(`"?(?:resets_at|reset_at|resetsat)"?\s*[:=]\s*"?(\d{10})`)
+	rePluginRefusal = regexp.MustCompile(`^model execution failed with status \d+$`)
+	reSeconds       = regexp.MustCompile(`"?(?:resets?_in_seconds|retry_after_seconds|retry_after|retryafter|reset_seconds)"?\s*[:=]\s*"?(\d+(?:\.\d+)?)`)
+	reRetryDelay    = regexp.MustCompile(`"?retrydelay"?\s*[:=]\s*"(\d+(?:\.\d+)?)s"`)
+	reRetryIn       = regexp.MustCompile(`(?:retry|try again|reset[s]?|available again)\s+(?:after|in)\s+(?:about\s+)?(\d+(?:\.\d+)?)\s*(ms|milliseconds?|s|secs?|seconds?|m|mins?|minutes?|h|hrs?|hours?)\b`)
+	reDuration      = regexp.MustCompile(`(?:retry|try again|reset[s]?)\s+(?:after|in)\s+((?:\d+h)?(?:\d+m)?(?:\d+(?:\.\d+)?s)?)\b`)
+	reResetsAt      = regexp.MustCompile(`"?(?:resets_at|reset_at|resetsat)"?\s*[:=]\s*"?(\d{10})`)
 )
 
 // RetryAfter extracts a reset hint from an upstream error message. It

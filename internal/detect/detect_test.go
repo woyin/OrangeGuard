@@ -101,6 +101,9 @@ func TestClassify(t *testing.T) {
 		{0, "stream reset by peer", KindServer},
 		{0, "上游额度已用完", KindQuota},
 		{503, `{"error":{"message":"Model gpt-6-astra has no configured price","type":"cpa_key_billing_error","code":"model_price_error"}}`, KindNotFound},
+		{503, "model execution failed with status 503", KindNotFound},
+		{503, "model execution failed with status 503: upstream body", KindServer},
+		{429, "model execution failed with status 429", KindRateLimit},
 	}
 	for _, c := range cases {
 		if got := Classify(c.status, c.msg); got != c.want {
