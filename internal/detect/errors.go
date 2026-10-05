@@ -57,6 +57,13 @@ var notFoundMarkers = []string{
 // in which case the message alone decides.
 func Classify(status int, message string) Kind {
 	m := strings.ToLower(message)
+	// cpa-plugin-key-billing refuses models it has no price for with 503
+	// model_price_error. For a virtual model member that is a configuration
+	// state, not an upstream outage: treat it like an unknown model so the
+	// member is skipped for a long time instead of retried as a 5xx.
+	if strings.Contains(m, "model_price_error") || strings.Contains(m, "has no configured price") {
+		return KindNotFound
+	}
 	quota := containsAny(m, quotaMarkers)
 	switch {
 	case status == 402:

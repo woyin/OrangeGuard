@@ -1,29 +1,31 @@
 #!/usr/bin/env bash
-# Install or update orangeguard and the woyin/cpa-plugin-key-billing fork on a
-# Docker-based CLIProxyAPI deployment. Run on the CPA server as a user that can
-# use docker:
+# Install or update orangeguard on a Docker-based CLIProxyAPI deployment.
+# Run on the CPA server as a user that can use docker:
 #
-#   sudo bash install-cpa-plugins.sh            # install / update
+#   sudo bash install-cpa-plugins.sh            # install / update orangeguard
 #   sudo bash install-cpa-plugins.sh --dry-run  # checks and build only
 #   sudo bash install-cpa-plugins.sh --rollback <backup dir>
+#
+#   --with-key-billing  also replace an installed cpa-key-billing with the
+#                       woyin/cpa-plugin-key-billing fork (off by default; an
+#                       existing key-billing is otherwise left untouched)
 #
 # What it does:
 #   1. Finds the CPA container whose config.yaml comes from $CPA_DIR and the
 #      host directory mounted at /CLIProxyAPI/plugins.
-#   2. Builds both plugins inside golang:<ver>-bookworm, matching the glibc of
+#   2. Builds the plugin(s) inside golang:<ver>-bookworm, matching the glibc of
 #      the official Debian bookworm CPA image and the host CPU architecture.
-#   3. Stops the container, backs up config.yaml and every plugin library it
-#      replaces (plus the key-billing database), installs the libraries next to
-#      the existing cpa-key-billing library, and starts the container again.
-#      The original key-billing is replaced in place: same plugin ID, same
-#      database, so existing API keys, plans, prices and usage are kept.
-#   4. Verifies from the CPA log that both plugins loaded, and rolls back the
-#      libraries automatically if they did not.
+#   3. Stops the container, backs up config.yaml and every library it replaces,
+#      installs the library and starts the container again. Existing libraries
+#      are replaced in place under their current names (cpa prefers versioned
+#      files such as name-v1.2.3.so and the plugin store may pin versions).
+#   4. Verifies from the CPA log that the plugins registered, and rolls back
+#      automatically if they did not.
 #
 # config.yaml gets "orangeguard: {enabled: true}" under plugins.configs when it
 # is missing (CPA v8 does not load plugins without an explicit entry). Nothing
 # else changes: orangeguard does nothing until guard/virtual_models rules are
-# added, and key-billing keeps its existing settings.
+# added.
 set -euo pipefail
 
 CPA_DIR="${CPA_DIR:-/opt/cpa}"
@@ -36,12 +38,17 @@ VERIFY_TIMEOUT="${VERIFY_TIMEOUT:-90}"
 
 mode="install"
 rollback_dir=""
-case "${1:-}" in
-  "") ;;
-  --dry-run) mode="dry-run" ;;
-  --rollback) mode="rollback"; rollback_dir="${2:?usage: --rollback <backup dir>}" ;;
-  *) echo "usage: $0 [--dry-run | --rollback <backup dir>]" >&2; exit 2 ;;
-esac
+with_kb=""
+usage() { echo "usage: $0 [--dry-run] [--with-key-billing] | --rollback <backup dir>" >&2; exit 2; }
+while (( $# > 0 )); do
+  case "$1" in
+    --dry-run) mode="dry-run" ;;
+    --with-key-billing) with_kb=1 ;;
+    --rollback) mode="rollback"; rollback_dir="${2:-}"; [[ -n "$rollback_dir" ]] || usage; shift ;;
+    *) usage ;;
+  esac
+  shift
+done
 
 log() { printf '==> %s\n' "$*"; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
@@ -145,14 +152,17 @@ plugin_id() {
   fi
 }
 
-# Existing key-billing libraries, plain or store-versioned. They are replaced
-# in place under their current names: cpa prefers versioned files and the
-# plugin store may pin plugins.configs.cpa-key-billing.store.version, so a new
-# file with a different name could be ignored or deleted by cpa.
-existing_kb=()
-while IFS= read -r lib; do
-  [[ "$(plugin_id "$lib")" == "cpa-key-billing" ]] && existing_kb+=("$lib")
-done < <(find "$plugins_dir" -name 'cpa-key-billing*.so' -type f | sort)
+# existing_libs <id>: libraries cpa would treat as plugin <id>, plain or
+# store-versioned. They are replaced in place under their current names: cpa
+# prefers versioned files and the plugin store may pin a version in config, so
+# a new file with a different name could be ignored or deleted by cpa.
+existing_libs() {
+  find "$plugins_dir" -name "$1*.so" -type f | sort | while IFS= read -r lib; do
+    [[ "$(plugin_id "$lib")" == "$1" ]] && echo "$lib"
+  done
+}
+mapfile -t existing_kb < <(existing_libs cpa-key-billing)
+mapfile -t existing_og < <(existing_libs orangeguard)
 
 [[ -n "$config_file" && -f "$config_file" ]] || die "config.yaml mount not found for $container"
 grep -qE '^plugins:' "$config_file" || die "$config_file has no plugins: section"
@@ -189,28 +199,36 @@ if [[ "$mode" == "rollback" ]]; then
   exit 0
 fi
 
-if (( ${#existing_kb[@]} == 0 )); then
-  log "no existing key-billing library found; installing fresh"
-  target_dir="$plugins_dir/linux/$arch"
-  kb_targets=("$target_dir/cpa-key-billing.so")
-else
-  # orangeguard goes next to the key-billing library cpa loads.
+# New libraries go next to an existing plugin, else into plugins/linux/<arch>.
+target_dir="$plugins_dir/linux/$arch"
+if (( ${#existing_og[@]} > 0 )); then
+  target_dir="$(dirname "${existing_og[0]}")"
+elif (( ${#existing_kb[@]} > 0 )); then
   target_dir="$(dirname "${existing_kb[0]}")"
-  for lib in "${existing_kb[@]}"; do
-    [[ "$(dirname "$lib")" == "$plugins_dir/linux/$arch" ]] && target_dir="$plugins_dir/linux/$arch"
-  done
-  kb_targets=("${existing_kb[@]}")
-  log "existing key-billing (replaced in place): ${existing_kb[*]}"
-  if grep -qE '^[[:space:]]+(version|release-tag):' "$config_file"; then
-    log "note: the plugin store pins a key-billing version in config.yaml; the file name is kept so the pin still matches"
+fi
+if (( ${#existing_og[@]} > 0 )); then
+  og_targets=("${existing_og[@]}")
+  log "existing orangeguard (replaced in place): ${existing_og[*]}"
+else
+  og_targets=("$target_dir/orangeguard.so")
+fi
+kb_targets=()
+if [[ -n "$with_kb" ]]; then
+  if (( ${#existing_kb[@]} > 0 )); then
+    kb_targets=("${existing_kb[@]}")
+    log "key-billing fork replaces (in place): ${existing_kb[*]}"
+  else
+    kb_targets=("$target_dir/cpa-key-billing.so")
   fi
+elif (( ${#existing_kb[@]} > 0 )); then
+  log "key-billing left untouched: ${existing_kb[*]}"
 fi
 log "install target: $target_dir"
 
 # --- 2. build ---------------------------------------------------------------
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-log "building plugins in $GO_IMAGE (linux/$arch)"
+log "building in $GO_IMAGE (linux/$arch)"
 # Servers behind an HTTP proxy: HTTPS_PROXY/NO_PROXY are passed through, and
 # BUILD_CA_BUNDLE can point at an extra CA bundle the proxy needs.
 build_args=()
@@ -224,18 +242,21 @@ fi
 docker run --rm --network host --platform "linux/$arch" -v "$work:/out" "${build_args[@]}" \
   -e GOFLAGS=-buildvcs=false -e GOPROXY="${GOPROXY:-https://proxy.golang.org,direct}" \
   -e OG_REPO="$ORANGEGUARD_REPO" -e OG_REF="$ORANGEGUARD_REF" \
-  -e KB_REPO="$KEYBILLING_REPO" -e KB_REF="$KEYBILLING_REF" \
+  -e KB_REPO="$KEYBILLING_REPO" -e KB_REF="$KEYBILLING_REF" -e WITH_KB="$with_kb" \
   "$GO_IMAGE" bash -euc '
     git clone -q --depth 1 -b "$OG_REF" "$OG_REPO" /src/og
-    git clone -q --depth 1 -b "$KB_REF" "$KB_REPO" /src/kb
     og_rev="$(git -C /src/og rev-parse --short HEAD)"
-    kb_rev="$(git -C /src/kb rev-parse --short HEAD)"
     (cd /src/og && CGO_ENABLED=1 go build -buildmode=c-shared \
       -ldflags "-X main.pluginVersion=$OG_REF-$og_rev" -o /out/orangeguard.so .)
-    (cd /src/kb && CGO_ENABLED=1 go build -tags cshared -buildmode=c-shared \
-      -o /out/cpa-key-billing.so ./cmd/cpa-key-billing)
+    printf "orangeguard %s\n" "$og_rev" >/out/revisions
+    if [[ -n "$WITH_KB" ]]; then
+      git clone -q --depth 1 -b "$KB_REF" "$KB_REPO" /src/kb
+      kb_rev="$(git -C /src/kb rev-parse --short HEAD)"
+      (cd /src/kb && CGO_ENABLED=1 go build -tags cshared -buildmode=c-shared \
+        -o /out/cpa-key-billing.so ./cmd/cpa-key-billing)
+      printf "cpa-key-billing %s\n" "$kb_rev" >>/out/revisions
+    fi
     rm -f /out/*.h
-    printf "orangeguard %s\ncpa-key-billing %s\n" "$og_rev" "$kb_rev" >/out/revisions
     chown -R '"$(id -u):$(id -g)"' /out'
 sed 's/^/    /' "$work/revisions"
 
@@ -268,8 +289,10 @@ if [[ "$og_config" == "missing" ]]; then
   }
   echo "  added plugins.configs.orangeguard to $config_file"
 fi
-# Billing database (default plugins/cpa-key-billing-state-v1.db) and its WAL.
-while IFS= read -r db; do backup_file "$db"; done < <(find "$plugins_dir" -maxdepth 3 -name 'cpa-key-billing-state*' -type f)
+if [[ -n "$with_kb" ]]; then
+  # Billing database (default plugins/cpa-key-billing-state-v1.db) and its WAL.
+  while IFS= read -r db; do backup_file "$db"; done < <(find "$plugins_dir" -maxdepth 3 -name 'cpa-key-billing-state*' -type f)
+fi
 
 mkdir -p "$target_dir"
 install_lib() { # built-file destination
@@ -282,8 +305,11 @@ install_lib() { # built-file destination
   install -m 0755 "$1" "$2"
   echo "  installed $2"
 }
-install_lib "$work/orangeguard.so" "$target_dir/orangeguard.so"
-# Every copy is replaced, so no location can still load the original.
+# Every copy is replaced, so no location can still load an old build.
+for lib in "${og_targets[@]}"; do
+  mkdir -p "$(dirname "$lib")"
+  install_lib "$work/orangeguard.so" "$lib"
+done
 for lib in "${kb_targets[@]}"; do
   install_lib "$work/cpa-key-billing.so" "$lib"
 done
@@ -300,11 +326,15 @@ cpa_log() {
     find "$logs_dir" -maxdepth 1 -type f -newermt "$started_at" -exec cat {} + 2>/dev/null || true
   fi
 }
+# orangeguard must register; so must key-billing whenever it was installed
+# before or by this run, since the restart reloads it too.
+expect_kb=""
+(( ${#existing_kb[@]} > 0 || ${#kb_targets[@]} > 0 )) && expect_kb=1
 ok=""
 for ((i = 0; i < VERIFY_TIMEOUT; i++)); do
   out="$(cpa_log)"
   if grep -q 'plugin registered plugin_id=orangeguard' <<<"$out" &&
-    grep -q 'plugin registered plugin_id=cpa-key-billing' <<<"$out"; then
+    { [[ -z "$expect_kb" ]] || grep -q 'plugin registered plugin_id=cpa-key-billing' <<<"$out"; }; then
     ok=1
     break
   fi
@@ -325,16 +355,18 @@ if [[ -z "$ok" ]]; then
 fi
 
 cpa_log | grep -E 'plugin registered plugin_id=(orangeguard|cpa-key-billing)' | sed 's/^/    /'
-log "done. Both plugins are loaded."
-cat <<EOF
-
-Next steps:
-  * orangeguard is inactive until you add rules under plugins.configs.orangeguard
-    in $config_file (see config.example.yaml in the OrangeGuard repo).
-  * key-billing now admits unpriced models at \$0 (unpriced_models: allow) and
-    refreshes models.dev prices daily; set unpriced_models: block to keep the
-    old refusal.
-  * Do not click "update" for cpa-key-billing in the CPA plugin store: it would
-    replace the fork with the original release. Re-run this script instead.
-  * Roll back with:  sudo bash $0 --rollback $backup
-EOF
+log "done. Plugins are loaded."
+echo
+echo "Next steps:"
+echo "  * orangeguard is inactive until you add rules under plugins.configs.orangeguard"
+echo "    in $config_file (see config.example.yaml in the OrangeGuard repo)."
+if [[ -n "$with_kb" ]]; then
+  echo "  * key-billing fork: unpriced models are admitted at \$0 and models.dev prices"
+  echo "    refresh daily. Do not click \"update\" for it in the CPA plugin store; re-run"
+  echo "    this script with --with-key-billing instead."
+elif (( ${#existing_kb[@]} > 0 )); then
+  echo "  * cpa-key-billing refuses models without a price, including virtual model"
+  echo "    names. Give every virtual model a custom price (0 is fine: usage is billed"
+  echo "    at the price of the member that served it) and price every member."
+fi
+echo "  * Roll back with:  sudo bash $0 --rollback $backup"

@@ -100,6 +100,7 @@ func TestClassify(t *testing.T) {
 		{0, "429 rate limit", KindRateLimit},
 		{0, "stream reset by peer", KindServer},
 		{0, "上游额度已用完", KindQuota},
+		{503, `{"error":{"message":"Model gpt-6-astra has no configured price","type":"cpa_key_billing_error","code":"model_price_error"}}`, KindNotFound},
 	}
 	for _, c := range cases {
 		if got := Classify(c.status, c.msg); got != c.want {
