@@ -419,3 +419,19 @@ func TestManagement(t *testing.T) {
 		t.Fatal("reset failed")
 	}
 }
+
+func TestMonitorRecordsOnlyWhenEnabled(t *testing.T) {
+	e := newEngine(t, newFakeHost(nil), "")
+	e.RecordUsage("gpt-6-astra", "", "gpt-5.5-mini", false)
+	if st := e.Status().Monitor; len(st) != 1 || st[0].Mismatches != 1 {
+		t.Fatalf("monitor = %+v", st)
+	}
+	off := newEngine(t, newFakeHost(nil), "monitor:\n  enabled: false\n")
+	off.RecordUsage("gpt-6-astra", "", "gpt-5.5-mini", false)
+	if st := off.Status().Monitor; len(st) != 0 {
+		t.Fatalf("disabled monitor recorded %+v", st)
+	}
+	if !e.Status().Config.Monitor.Enabled || len(e.Status().Config.Guard.Models) == 0 {
+		t.Fatal("status must expose the effective configuration with defaults")
+	}
+}

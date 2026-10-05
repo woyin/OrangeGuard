@@ -59,57 +59,77 @@ func (s *StringList) UnmarshalYAML(node *yaml.Node) error {
 
 // Config is the full plugin configuration.
 type Config struct {
-	Enabled bool `yaml:"enabled"`
+	Enabled bool `yaml:"enabled" json:"enabled"`
 	// Provider is the provider id the virtual models are registered under.
-	Provider      string         `yaml:"provider"`
-	Guard         GuardConfig    `yaml:"guard"`
-	Cooldown      CooldownConfig `yaml:"cooldown"`
-	VirtualModels []VirtualModel `yaml:"virtual_models"`
+	Provider      string         `yaml:"provider" json:"provider"`
+	Guard         GuardConfig    `yaml:"guard" json:"guard"`
+	Cooldown      CooldownConfig `yaml:"cooldown" json:"cooldown"`
+	Monitor       MonitorConfig  `yaml:"monitor" json:"monitor"`
+	VirtualModels []VirtualModel `yaml:"virtual_models" json:"virtual_models"`
+}
+
+// MonitorConfig controls the passive served-model monitor fed by usage records.
+type MonitorConfig struct {
+	Enabled bool `yaml:"enabled" json:"enabled"`
+}
+
+// DefaultGuardModels protects the OpenAI families out of the box. Each rule
+// expects the requested name itself (snapshot suffixes allowed), so
+// gpt-6-astra answered by gpt-5.5-mini is caught while gpt-5-mini requested
+// and served as gpt-5-mini passes.
+func DefaultGuardModels() []GuardRule {
+	return []GuardRule{
+		{Model: "gpt-*"},
+		{Model: "chatgpt-*"},
+		{Model: "o1*"},
+		{Model: "o3*"},
+		{Model: "o4*"},
+	}
 }
 
 // GuardConfig configures upstream model-substitution detection.
 type GuardConfig struct {
 	// MaxRetries is the default number of extra attempts on the same model
 	// after a substitution is detected on a directly requested guarded model.
-	MaxRetries int `yaml:"max_retries"`
+	MaxRetries int `yaml:"max_retries" json:"max_retries"`
 	// RetryDelayMs is the pause between those attempts.
-	RetryDelayMs int `yaml:"retry_delay_ms"`
+	RetryDelayMs int `yaml:"retry_delay_ms" json:"retry_delay_ms"`
 	// OnMissingModel decides what happens when a response names no model.
-	OnMissingModel string      `yaml:"on_missing_model"`
-	Models         []GuardRule `yaml:"models"`
+	OnMissingModel string      `yaml:"on_missing_model" json:"on_missing_model"`
+	Models         []GuardRule `yaml:"models" json:"models"`
 }
 
 // GuardRule protects one client-facing model name (glob patterns allowed).
 type GuardRule struct {
-	Model string `yaml:"model"`
+	Model string `yaml:"model" json:"model"`
 	// Expect lists the processing-model names (globs allowed) the upstream may
 	// report. When empty the requested model name itself is expected.
-	Expect StringList `yaml:"expect"`
+	Expect StringList `yaml:"expect" json:"expect"`
 	// Deny lists processing-model names (globs allowed) that are always rejected.
-	Deny           StringList `yaml:"deny"`
-	MaxRetries     *int       `yaml:"max_retries"`
-	OnMissingModel string     `yaml:"on_missing_model"`
+	Deny           StringList `yaml:"deny" json:"deny"`
+	MaxRetries     *int       `yaml:"max_retries" json:"max_retries"`
+	OnMissingModel string     `yaml:"on_missing_model" json:"on_missing_model"`
 }
 
 // CooldownConfig controls how long a failing upstream model is skipped by
 // virtual models. All durations are in seconds.
 type CooldownConfig struct {
-	Enabled            *bool `yaml:"enabled"`
-	QuotaSeconds       int   `yaml:"quota_seconds"`
-	RateLimitSeconds   int   `yaml:"rate_limit_seconds"`
-	AuthSeconds        int   `yaml:"auth_seconds"`
-	NotFoundSeconds    int   `yaml:"not_found_seconds"`
-	ServerErrorSeconds int   `yaml:"server_error_seconds"`
-	MismatchSeconds    int   `yaml:"mismatch_seconds"`
+	Enabled            *bool `yaml:"enabled" json:"enabled"`
+	QuotaSeconds       int   `yaml:"quota_seconds" json:"quota_seconds"`
+	RateLimitSeconds   int   `yaml:"rate_limit_seconds" json:"rate_limit_seconds"`
+	AuthSeconds        int   `yaml:"auth_seconds" json:"auth_seconds"`
+	NotFoundSeconds    int   `yaml:"not_found_seconds" json:"not_found_seconds"`
+	ServerErrorSeconds int   `yaml:"server_error_seconds" json:"server_error_seconds"`
+	MismatchSeconds    int   `yaml:"mismatch_seconds" json:"mismatch_seconds"`
 	// ServerErrorThreshold is how many consecutive server errors are tolerated
 	// before a server-error cooldown starts.
-	ServerErrorThreshold int `yaml:"server_error_threshold"`
+	ServerErrorThreshold int `yaml:"server_error_threshold" json:"server_error_threshold"`
 	// BackoffMultiplier grows the cooldown on consecutive failures of the same kind.
-	BackoffMultiplier float64 `yaml:"backoff_multiplier"`
-	MaxSeconds        int     `yaml:"max_seconds"`
+	BackoffMultiplier float64 `yaml:"backoff_multiplier" json:"backoff_multiplier"`
+	MaxSeconds        int     `yaml:"max_seconds" json:"max_seconds"`
 	// HonorRetryAfter uses a reset hint found in the upstream error (e.g.
 	// "retry after 120s", "resets_in_seconds": 3600) instead of the default.
-	HonorRetryAfter *bool `yaml:"honor_retry_after"`
+	HonorRetryAfter *bool `yaml:"honor_retry_after" json:"honor_retry_after"`
 }
 
 // On reports whether cooldown tracking is active.
@@ -120,59 +140,59 @@ func (c CooldownConfig) UseRetryAfter() bool { return c.HonorRetryAfter == nil |
 
 // VirtualModel merges several upstream models under one client-facing name.
 type VirtualModel struct {
-	Name     string   `yaml:"name"`
-	Strategy string   `yaml:"strategy"`
-	Members  []Member `yaml:"members"`
+	Name     string   `yaml:"name" json:"name"`
+	Strategy string   `yaml:"strategy" json:"strategy"`
+	Members  []Member `yaml:"members" json:"members"`
 	// MaxAttempts caps the number of upstream attempts per request. 0 means
 	// every member may be tried once (plus its own guard retries).
-	MaxAttempts int `yaml:"max_attempts"`
+	MaxAttempts int `yaml:"max_attempts" json:"max_attempts"`
 	// WhenAllCooling decides what happens when every member is cooling down.
-	WhenAllCooling string `yaml:"when_all_cooling"`
+	WhenAllCooling string `yaml:"when_all_cooling" json:"when_all_cooling"`
 	// FailoverOnClientError also fails over on 400-class errors that are not
 	// quota/auth/not-found related (e.g. a context-length error on a smaller
 	// member). Off by default because the same request usually fails everywhere.
-	FailoverOnClientError bool `yaml:"failover_on_client_error"`
+	FailoverOnClientError bool `yaml:"failover_on_client_error" json:"failover_on_client_error"`
 	// Guard checks every member's processing model even without a guard rule.
-	Guard        bool         `yaml:"guard"`
-	Capabilities Capabilities `yaml:"capabilities"`
+	Guard        bool         `yaml:"guard" json:"guard"`
+	Capabilities Capabilities `yaml:"capabilities" json:"capabilities"`
 }
 
 // Member is one upstream model inside a virtual model.
 type Member struct {
-	Model  string     `yaml:"model"`
-	Weight int        `yaml:"weight"`
-	Expect StringList `yaml:"expect"`
-	Deny   StringList `yaml:"deny"`
+	Model  string     `yaml:"model" json:"model"`
+	Weight int        `yaml:"weight" json:"weight"`
+	Expect StringList `yaml:"expect" json:"expect"`
+	Deny   StringList `yaml:"deny" json:"deny"`
 	// MaxRetries is the number of extra attempts on this member after a
 	// substitution is detected before failing over. Defaults to 0.
-	MaxRetries int `yaml:"max_retries"`
+	MaxRetries int `yaml:"max_retries" json:"max_retries"`
 }
 
 // Capabilities is the metadata published for a virtual model so clients and
 // agents can discover its context window, modalities and reasoning controls.
 type Capabilities struct {
-	DisplayName         string     `yaml:"display_name"`
-	Description         string     `yaml:"description"`
-	OwnedBy             string     `yaml:"owned_by"`
-	Type                string     `yaml:"type"`
-	ContextLength       int64      `yaml:"context_length"`
-	InputTokenLimit     int64      `yaml:"input_token_limit"`
-	MaxOutputTokens     int64      `yaml:"max_output_tokens"`
-	InputModalities     StringList `yaml:"input_modalities"`
-	OutputModalities    StringList `yaml:"output_modalities"`
-	Vision              bool       `yaml:"vision"`
-	SupportedParameters StringList `yaml:"supported_parameters"`
-	GenerationMethods   StringList `yaml:"generation_methods"`
-	Thinking            *Thinking  `yaml:"thinking"`
+	DisplayName         string     `yaml:"display_name" json:"display_name"`
+	Description         string     `yaml:"description" json:"description"`
+	OwnedBy             string     `yaml:"owned_by" json:"owned_by"`
+	Type                string     `yaml:"type" json:"type"`
+	ContextLength       int64      `yaml:"context_length" json:"context_length"`
+	InputTokenLimit     int64      `yaml:"input_token_limit" json:"input_token_limit"`
+	MaxOutputTokens     int64      `yaml:"max_output_tokens" json:"max_output_tokens"`
+	InputModalities     StringList `yaml:"input_modalities" json:"input_modalities"`
+	OutputModalities    StringList `yaml:"output_modalities" json:"output_modalities"`
+	Vision              bool       `yaml:"vision" json:"vision"`
+	SupportedParameters StringList `yaml:"supported_parameters" json:"supported_parameters"`
+	GenerationMethods   StringList `yaml:"generation_methods" json:"generation_methods"`
+	Thinking            *Thinking  `yaml:"thinking" json:"thinking"`
 }
 
 // Thinking describes reasoning budget controls.
 type Thinking struct {
-	Min            int        `yaml:"min"`
-	Max            int        `yaml:"max"`
-	ZeroAllowed    bool       `yaml:"zero_allowed"`
-	DynamicAllowed bool       `yaml:"dynamic_allowed"`
-	Levels         StringList `yaml:"levels"`
+	Min            int        `yaml:"min" json:"min"`
+	Max            int        `yaml:"max" json:"max"`
+	ZeroAllowed    bool       `yaml:"zero_allowed" json:"zero_allowed"`
+	DynamicAllowed bool       `yaml:"dynamic_allowed" json:"dynamic_allowed"`
+	Levels         StringList `yaml:"levels" json:"levels"`
 }
 
 // Default returns the configuration used when the plugin block is empty.
@@ -184,7 +204,9 @@ func Default() Config {
 			MaxRetries:     3,
 			RetryDelayMs:   200,
 			OnMissingModel: MissingModelAccept,
+			Models:         DefaultGuardModels(),
 		},
+		Monitor: MonitorConfig{Enabled: true},
 		Cooldown: CooldownConfig{
 			QuotaSeconds:         1800,
 			RateLimitSeconds:     60,

@@ -82,6 +82,12 @@ for _ in $(seq 1 60); do
   sleep 0.5
 done
 
+# Plugin models are registered asynchronously after the server starts.
+for _ in $(seq 1 30); do
+  curl -s "http://127.0.0.1:$CPA_PORT/v1beta/models?key=test-key" | grep -q '"models/smart"' && break
+  sleep 0.5
+done
+
 FAILED=0
 check() { # name, expected substring, actual
   if [[ "$3" == *"$2"* ]]; then echo "PASS  $1"; else echo "FAIL  $1: expected '$2' in: $3"; FAILED=1; fi
@@ -111,6 +117,11 @@ if [[ "$STREAM" == *"gpt-5.5-mini"* ]]; then echo "FAIL  substituted stream leak
 check "claude protocol on virtual model" '"model":"good-model"' \
   "$(curl -s "http://127.0.0.1:$CPA_PORT/v1/messages" -H "x-api-key: test-key" -H "anthropic-version: 2023-06-01" \
       -H "Content-Type: application/json" -d '{"model":"smart","max_tokens":50,"messages":[{"role":"user","content":"hi"}]}')"
+
+check "management page served" "<title>OrangeGuard</title>" \
+  "$(curl -s "http://127.0.0.1:$CPA_PORT/v0/resource/plugins/orangeguard/ui")"
+check "monitor saw the downgrade" '"last_mismatch_as":"gpt-5.5-mini"' \
+  "$(mgmt "http://127.0.0.1:$CPA_PORT/v0/management/plugins/orangeguard/status")"
 
 echo "--- upstream calls"; cat "$WORK/upstream.log"
 if [ "$FAILED" -ne 0 ]; then echo "--- cpa log (orangeguard)"; grep -i orangeguard "$WORK/cpa.log" || true; exit 1; fi

@@ -1,0 +1,732 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OrangeGuard</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #667085; --border: #e3e6eb;
+  --accent: #e8730c; --accent-soft: #fdf0e3; --ok: #1a8f4c; --ok-soft: #e6f5ec;
+  --warn: #b45309; --warn-soft: #fef3e2; --bad: #c0362c; --bad-soft: #fde9e7;
+  --chip: #eef1f5; --shadow: 0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.08);
+}
+:root[data-theme="dark"] {
+  --bg: #12141a; --panel: #1b1f27; --text: #e6e8ec; --muted: #98a1b2; --border: #2c323d;
+  --accent: #f08a2c; --accent-soft: #3a2614; --ok: #4cc283; --ok-soft: #173126;
+  --warn: #f2b24c; --warn-soft: #3a2c12; --bad: #f2776d; --bad-soft: #3d1c1a;
+  --chip: #262c36; --shadow: none;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+body.embedded { background: transparent; }
+button, input, select, textarea { font: inherit; color: inherit; }
+header { display: flex; align-items: center; gap: 16px; padding: 14px 20px; border-bottom: 1px solid var(--border); background: var(--panel); position: sticky; top: 0; z-index: 5; flex-wrap: wrap; }
+header h1 { margin: 0; font-size: 17px; display: flex; align-items: center; gap: 8px; }
+.logo { width: 22px; height: 22px; border-radius: 6px; background: var(--accent); display: inline-block; }
+nav { display: flex; gap: 4px; flex-wrap: wrap; }
+nav button { border: 0; background: none; padding: 7px 12px; border-radius: 8px; cursor: pointer; color: var(--muted); }
+nav button.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.spacer { flex: 1; }
+.status-line { color: var(--muted); font-size: 13px; }
+main { max-width: 1180px; margin: 0 auto; padding: 18px 20px 60px; }
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); padding: 18px; margin-bottom: 16px; }
+.panel h2 { margin: 0 0 4px; font-size: 16px; }
+.panel h3 { margin: 18px 0 8px; font-size: 14px; }
+.hint { color: var(--muted); font-size: 13px; margin: 0 0 12px; }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; }
+label.field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+label.field > span { font-weight: 500; }
+input[type=text], input[type=number], input[type=password], select, textarea { border: 1px solid var(--border); background: var(--panel); border-radius: 8px; padding: 7px 10px; min-width: 0; width: 100%; color: var(--text); }
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+.check { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.btn { border: 1px solid var(--border); background: var(--panel); border-radius: 8px; padding: 7px 14px; cursor: pointer; white-space: nowrap; }
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.btn.danger { color: var(--bad); }
+.btn.small { padding: 3px 9px; font-size: 12px; }
+.btn:disabled { opacity: .5; cursor: default; }
+.chip { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: 999px; background: var(--chip); font-size: 12px; color: var(--muted); white-space: nowrap; }
+.chip.ok { background: var(--ok-soft); color: var(--ok); }
+.chip.warn { background: var(--warn-soft); color: var(--warn); }
+.chip.bad { background: var(--bad-soft); color: var(--bad); }
+.chip.accent { background: var(--accent-soft); color: var(--accent); }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+.card { border: 1px solid var(--border); border-radius: 10px; padding: 14px; cursor: pointer; background: var(--panel); }
+.card:hover { border-color: var(--accent); }
+.card .title { font-weight: 600; font-size: 15px; margin-bottom: 6px; word-break: break-all; }
+.card .members { color: var(--muted); font-size: 13px; margin-top: 8px; word-break: break-all; }
+.card.new { display: flex; align-items: center; justify-content: center; color: var(--accent); border-style: dashed; min-height: 110px; font-weight: 600; }
+.segmented { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; flex-wrap: wrap; }
+.segmented button { border: 0; background: none; padding: 7px 12px; cursor: pointer; border-right: 1px solid var(--border); }
+.segmented button:last-child { border-right: 0; }
+.segmented button.active { background: var(--accent); color: #fff; }
+.member { display: grid; grid-template-columns: 26px minmax(160px, 1fr) auto auto auto; gap: 10px; align-items: center; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin-bottom: 6px; background: var(--panel); }
+.member.dragging { opacity: .5; }
+.member.over { border-color: var(--accent); }
+.handle { cursor: grab; color: var(--muted); text-align: center; user-select: none; }
+.member .name { word-break: break-all; }
+.member .meta { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 2px; }
+.member .ctl { display: flex; gap: 6px; align-items: center; }
+.member .ctl input { width: 64px; }
+.picker { position: relative; }
+.picker-list { position: absolute; left: 0; right: 0; top: 100%; margin-top: 4px; max-height: 280px; overflow: auto; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.15); z-index: 10; }
+.picker-item { padding: 7px 10px; cursor: pointer; display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+.picker-item:hover, .picker-item.active { background: var(--accent-soft); }
+.warnbox { border-left: 3px solid var(--warn); background: var(--warn-soft); padding: 8px 12px; border-radius: 6px; margin: 8px 0; font-size: 13px; }
+.okbox { border-left: 3px solid var(--ok); background: var(--ok-soft); padding: 8px 12px; border-radius: 6px; margin: 8px 0; font-size: 13px; }
+.preview { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13px; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 8px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { font-size: 12px; color: var(--muted); font-weight: 600; white-space: nowrap; }
+td.num { text-align: right; white-space: nowrap; }
+.table-wrap { overflow-x: auto; }
+details summary { cursor: pointer; color: var(--muted); margin: 12px 0 6px; }
+.actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; flex-wrap: wrap; }
+#toasts { position: fixed; right: 20px; bottom: 20px; display: flex; flex-direction: column; gap: 8px; align-items: flex-end; z-index: 50; }
+.toast { background: var(--text); color: var(--panel); padding: 10px 16px; border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,.25); max-width: 420px; }
+.toast.error { background: var(--bad); color: #fff; }
+.toast.warn { background: var(--warn); color: #fff; }
+.login { max-width: 420px; margin: 80px auto; }
+.empty { color: var(--muted); padding: 16px 0; text-align: center; }
+.hidden { display: none !important; }
+@media (max-width: 640px) {
+  header { padding: 10px 12px; }
+  main { padding: 12px 10px 60px; }
+  .member { grid-template-columns: 22px 1fr; }
+  .member .ctl { grid-column: 2; flex-wrap: wrap; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1><span class="logo" aria-hidden="true"></span>OrangeGuard</h1>
+  <nav id="tabs" role="tablist">
+    <button data-tab="virtual" role="tab">组合模型</button>
+    <button data-tab="guard" role="tab">防降级与监控</button>
+    <button data-tab="cooldown" role="tab">冷却与设置</button>
+  </nav>
+  <div class="spacer"></div>
+  <span class="status-line" id="status-line"></span>
+  <button class="btn small" id="refresh">刷新</button>
+</header>
+<div id="toasts" aria-live="polite"></div>
+<main id="main">
+  <section class="panel login hidden" id="login">
+    <h2>需要管理密钥</h2>
+    <p class="hint">未能从 CPA 管理中心读取登录状态。请输入 cpa 的管理密钥（仅保存在本标签页的会话中）。</p>
+    <div class="row"><input type="password" id="login-key" placeholder="management key" autocomplete="off"><button class="btn primary" id="login-btn">登录</button></div>
+    <p class="hint" id="login-error"></p>
+  </section>
+  <section id="view-virtual" class="hidden"></section>
+  <section id="view-guard" class="hidden"></section>
+  <section id="view-cooldown" class="hidden"></section>
+</main>
+<script>
+"use strict";
+const API = "/v0/management";
+const STATUS = API + "/plugins/orangeguard/status";
+const CONFIG = API + "/plugins/orangeguard/config";
+const MODALITIES = ["text", "image", "audio", "video", "pdf"];
+const STRATEGIES = [["fallback", "按顺序回退"], ["round-robin", "轮询"], ["random", "随机"], ["weighted", "加权"]];
+const REASONS = { quota: "额度用尽", rate_limit: "限流", auth: "鉴权失败", not_found: "模型不可用", server_error: "上游错误", model_mismatch: "被降级" };
+
+const state = { key: "", status: null, models: [], modelInfo: new Map(), modelsError: "", tab: "virtual", editing: null, filter: "", onlyMismatch: false };
+
+/* ---------- helpers ---------- */
+function h(tag, attrs, ...children) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v === undefined || v === null || v === false) continue;
+    if (k === "class") el.className = v;
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else if (k === "value") el.value = v;
+    else if (k === "checked") el.checked = !!v;
+    else el.setAttribute(k, v === true ? "" : v);
+  }
+  for (const c of children.flat(Infinity)) {
+    if (c === null || c === undefined || c === false) continue;
+    el.append(c instanceof Node ? c : document.createTextNode(String(c)));
+  }
+  return el;
+}
+const $ = (id) => document.getElementById(id);
+const clone = (v) => JSON.parse(JSON.stringify(v));
+const lower = (s) => String(s || "").trim().toLowerCase();
+function toast(msg, level) {
+  const kind = level === true ? "error" : level || "";
+  const t = h("div", { class: "toast " + kind, role: kind === "error" ? "alert" : "status" }, msg);
+  $("toasts").append(t);
+  setTimeout(() => t.remove(), kind ? 6000 : 2600);
+}
+function fmtTokens(n) {
+  if (!n) return "";
+  if (n >= 1000000) return (n / 1000000).toFixed(n % 1000000 ? 1 : 0) + "M";
+  if (n >= 1000) return Math.round(n / 1000) + "K";
+  return String(n);
+}
+function fmtDuration(sec) {
+  if (sec < 60) return sec + " 秒";
+  if (sec < 3600) return Math.ceil(sec / 60) + " 分钟";
+  return (sec / 3600).toFixed(1).replace(/\.0$/, "") + " 小时";
+}
+function fmtTime(iso) {
+  if (!iso || iso.startsWith("0001")) return "";
+  const d = new Date(iso);
+  return isNaN(d) ? "" : d.toLocaleString();
+}
+function splitList(s) { return String(s || "").split(/[,，\s]+/).map((x) => x.trim()).filter(Boolean); }
+function glob(pattern, name) {
+  const re = new RegExp("^" + lower(pattern).replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".") + "$");
+  return re.test(lower(name));
+}
+
+/* ---------- theme & auth (shared with the cpa management center) ---------- */
+function panelStoredValue(name) {
+  try {
+    let raw = localStorage.getItem(name);
+    if (!raw) return null;
+    const prefix = "enc::v1::";
+    if (raw.startsWith(prefix)) {
+      const secret = new TextEncoder().encode("cli-proxy-api-webui::secure-storage|" + location.host + "|" + navigator.userAgent);
+      const binary = atob(raw.slice(prefix.length));
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i) ^ secret[i % secret.length];
+      raw = new TextDecoder().decode(bytes);
+    }
+    return JSON.parse(raw);
+  } catch (_) { return null; }
+}
+function applyTheme() {
+  const t = panelStoredValue("cli-proxy-theme")?.state?.theme;
+  const dark = t === "dark" || ((!t || t === "auto") && window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches);
+  document.documentElement.dataset.theme = dark ? "dark" : "light";
+}
+function panelKey() {
+  const a = panelStoredValue("cli-proxy-auth")?.state?.managementKey;
+  if (typeof a === "string" && a.trim()) return a.trim();
+  const b = panelStoredValue("managementKey");
+  if (typeof b === "string" && b.trim()) return b.trim();
+  try { return sessionStorage.getItem("orangeguard.key") || ""; } catch (_) { return ""; }
+}
+
+async function api(method, path, body, key) {
+  const res = await fetch(path, {
+    method, cache: "no-store",
+    headers: { Authorization: "Bearer " + (key ?? state.key), ...(body !== undefined ? { "Content-Type": "application/json" } : {}) },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  const text = await res.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch (_) {}
+  if (!res.ok) {
+    const err = new Error((data && (data.message || data.error)) || text || res.statusText);
+    err.status = res.status;
+    throw err;
+  }
+  return data;
+}
+
+/* ---------- data ---------- */
+async function loadStatus() {
+  state.status = await api("GET", STATUS);
+  const line = $("status-line");
+  const n = (state.status.config.virtual_models || []).length;
+  line.textContent = (state.status.config.enabled ? "运行中" : "已停用") + " · " + n + " 个组合模型 · " + (state.status.config.guard.models || []).length + " 条防降级规则";
+}
+
+// cpa has no management endpoint listing every model with metadata, so the
+// page uses a client API key from the configuration to read the public model
+// lists: /v1/models for the owner, /v1beta/models for limits and modalities.
+async function loadModels() {
+  state.models = []; state.modelInfo = new Map(); state.modelsError = "";
+  try {
+    const cfg = await api("GET", API + "/config");
+    const keys = (cfg && cfg["api-keys"]) || [];
+    const key = keys.map((k) => typeof k === "string" ? k : (k && (k.key || k["api-key"]))).find(Boolean);
+    if (!key) { state.modelsError = "cpa 未配置客户端 API Key，无法读取模型列表；可直接输入模型名。"; return; }
+    const [openai, gemini] = await Promise.all([
+      fetch("/v1/models", { headers: { Authorization: "Bearer " + key }, cache: "no-store" }).then((r) => r.ok ? r.json() : null).catch(() => null),
+      fetch("/v1beta/models?key=" + encodeURIComponent(key), { cache: "no-store" }).then((r) => r.ok ? r.json() : null).catch(() => null),
+    ]);
+    for (const m of (openai && openai.data) || []) {
+      if (!m || !m.id) continue;
+      state.modelInfo.set(lower(m.id), { id: m.id, owner: m.owned_by || "" });
+    }
+    for (const m of (gemini && gemini.models) || []) {
+      const id = String(m.name || "").replace(/^models\//, "");
+      if (!id) continue;
+      const info = state.modelInfo.get(lower(id)) || { id, owner: "" };
+      info.context = m.inputTokenLimit || 0;
+      info.output = m.outputTokenLimit || 0;
+      info.inputModalities = (m.supportedInputModalities || []).map(lower);
+      info.display = m.displayName && m.displayName !== id ? m.displayName : "";
+      state.modelInfo.set(lower(id), info);
+    }
+    state.models = [...state.modelInfo.values()].sort((a, b) => a.id.localeCompare(b.id));
+    if (!state.models.length) state.modelsError = "未能读取模型列表；可直接输入模型名。";
+  } catch (e) {
+    state.modelsError = "读取模型列表失败：" + e.message + "；可直接输入模型名。";
+  }
+}
+const isVirtual = (id) => (state.status?.config.virtual_models || []).some((v) => lower(v.name) === lower(id));
+function realModels() { return state.models.filter((m) => m.owner !== state.status?.config.provider && !isVirtual(m.id)); }
+
+/* ---------- saving ---------- */
+// The page edits the effective configuration and writes whole sections back
+// through cpa's plugin config API, which saves config.yaml and hot-reloads
+// the plugin. host-owned keys (enabled, priority, store) are never sent.
+function prune(v) {
+  if (Array.isArray(v)) return v.map(prune);
+  if (v && typeof v === "object") {
+    const out = {};
+    for (const [k, x] of Object.entries(v)) {
+      if (x === null || x === undefined || x === "") continue;
+      if (Array.isArray(x) && !x.length && k !== "models" && k !== "virtual_models" && k !== "members") continue;
+      out[k] = prune(x);
+    }
+    return out;
+  }
+  return v;
+}
+function compact(cfg) {
+  const guard = clone(cfg.guard);
+  guard.models = (guard.models || []).map((r) => {
+    const out = { ...r };
+    if (out.on_missing_model === guard.on_missing_model) delete out.on_missing_model;
+    if (out.max_retries === null || out.max_retries === undefined) delete out.max_retries;
+    return out;
+  });
+  const virtual_models = (cfg.virtual_models || []).map((vm) => {
+    const out = clone(vm);
+    out.members = out.members.map((m) => {
+      const mm = { ...m };
+      if (vm.strategy !== "weighted" || mm.weight === 1) delete mm.weight;
+      if (!mm.max_retries) delete mm.max_retries;
+      return mm;
+    });
+    if (!out.max_attempts) delete out.max_attempts;
+    if (!out.guard) delete out.guard;
+    if (!out.failover_on_client_error) delete out.failover_on_client_error;
+    if (out.when_all_cooling === "soonest") delete out.when_all_cooling;
+    const caps = out.capabilities || {};
+    for (const k of ["context_length", "input_token_limit", "max_output_tokens"]) if (!caps[k]) delete caps[k];
+    if (!caps.vision) delete caps.vision;
+    if (caps.thinking && !(caps.thinking.levels || []).length && !caps.thinking.max) delete caps.thinking;
+    return out;
+  });
+  return { guard, cooldown: cfg.cooldown, monitor: cfg.monitor, virtual_models };
+}
+async function save(cfg, message) {
+  const body = prune(compact(cfg));
+  await api("PATCH", CONFIG, body);
+  const want = JSON.stringify((cfg.virtual_models || []).map((v) => v.name)) + JSON.stringify((cfg.guard.models || []).map((r) => r.model));
+  for (let i = 0; i < 24; i++) {
+    await new Promise((r) => setTimeout(r, 500));
+    await loadStatus();
+    const c = state.status.config;
+    const got = JSON.stringify((c.virtual_models || []).map((v) => v.name)) + JSON.stringify((c.guard.models || []).map((r) => r.model));
+    if (got === want) { toast(message || "已保存，配置已生效"); render(); return true; }
+  }
+  toast("已写入 config.yaml，但插件尚未加载新配置；请检查 cpa 日志中的 orangeguard: config 警告", true);
+  render();
+  return false;
+}
+
+/* ---------- shared widgets ---------- */
+function modelMeta(id) {
+  const info = state.modelInfo.get(lower(id));
+  const chips = [];
+  if (!info) chips.push(h("span", { class: "chip warn", title: "该名称不在 cpa 的模型列表中" }, "未知模型"));
+  else {
+    if (info.owner) chips.push(h("span", { class: "chip" }, info.owner));
+    if (info.context) chips.push(h("span", { class: "chip", title: "上下文" }, fmtTokens(info.context)));
+    if ((info.inputModalities || []).some((m) => m !== "text")) chips.push(h("span", { class: "chip", title: "输入模态" }, info.inputModalities.filter((m) => m !== "text").join("/")));
+  }
+  return chips;
+}
+function guardRuleFor(id, cfg) { return (cfg.guard.models || []).find((r) => glob(r.model, id)); }
+function cooldownOf(id) { return (state.status?.cooldowns || []).find((c) => lower(c.model) === lower(id) && c.cooling_down); }
+function cooldownChip(id) {
+  const c = cooldownOf(id);
+  if (!c) return h("span", { class: "chip ok" }, "可用");
+  return h("span", { class: "chip warn", title: c.last_error || "" }, (REASONS[c.reason] || c.reason) + " · " + fmtDuration(c.remaining_seconds));
+}
+async function resetCooldown(model) {
+  await api("POST", API + "/plugins/orangeguard/cooldown/reset", model ? { model } : {});
+  await loadStatus(); render(); toast(model ? "已清除 " + model + " 的冷却" : "已清除全部冷却");
+}
+
+function modelPicker({ placeholder, exclude, onPick }) {
+  const input = h("input", { type: "text", placeholder, autocomplete: "off" });
+  const list = h("div", { class: "picker-list hidden" });
+  const box = h("div", { class: "picker" }, input, list);
+  let active = 0, items = [];
+  const draw = () => {
+    const q = lower(input.value);
+    items = realModels().filter((m) => !exclude().has(lower(m.id)) && (!q || lower(m.id).includes(q) || lower(m.owner).includes(q))).slice(0, 60);
+    const free = input.value.trim() && !state.modelInfo.has(q) && !exclude().has(q) ? input.value.trim() : "";
+    list.replaceChildren(
+      ...items.map((m, i) => h("div", { class: "picker-item" + (i === active ? " active" : ""), onmousedown: (e) => { e.preventDefault(); pick(m.id); } },
+        h("span", { class: "mono" }, m.id), h("span", { class: "row" }, ...modelMeta(m.id)))),
+      free ? h("div", { class: "picker-item", onmousedown: (e) => { e.preventDefault(); pick(free); } }, h("span", {}, "使用自定义名称 “" + free + "”"), h("span", { class: "chip warn" }, "未知模型")) : null,
+      !items.length && !free ? h("div", { class: "empty" }, state.modelsError || "没有匹配的模型") : null,
+    );
+    list.classList.remove("hidden");
+  };
+  const pick = (id) => { onPick(id); input.value = ""; list.classList.add("hidden"); };
+  input.addEventListener("focus", () => { active = 0; draw(); });
+  input.addEventListener("input", () => { active = 0; draw(); });
+  input.addEventListener("blur", () => setTimeout(() => list.classList.add("hidden"), 120));
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown") { active = Math.min(active + 1, items.length - 1); draw(); e.preventDefault(); }
+    else if (e.key === "ArrowUp") { active = Math.max(active - 1, 0); draw(); e.preventDefault(); }
+    else if (e.key === "Enter") { e.preventDefault(); if (items[active]) pick(items[active].id); else if (input.value.trim()) pick(input.value.trim()); }
+    else if (e.key === "Escape") list.classList.add("hidden");
+  });
+  return box;
+}
+
+/* ---------- 组合模型 ---------- */
+function renderVirtual() {
+  const view = $("view-virtual");
+  if (state.editing) return renderEditor(view);
+  const cfg = state.status.config;
+  const live = new Map((state.status.virtual_models || []).map((v) => [lower(v.name), v]));
+  const cards = (cfg.virtual_models || []).map((vm, index) => {
+    const lv = live.get(lower(vm.name));
+    const avail = lv ? lv.members.filter((m) => m.available).length : vm.members.length;
+    const caps = vm.capabilities || {};
+    return h("div", { class: "card", tabindex: "0", onclick: () => openEditor(index), onkeydown: (e) => { if (e.key === "Enter") openEditor(index); } },
+      h("div", { class: "title mono" }, vm.name),
+      h("div", { class: "row" },
+        h("span", { class: "chip accent" }, (STRATEGIES.find((s) => s[0] === vm.strategy) || [, vm.strategy])[1]),
+        h("span", { class: "chip " + (avail === vm.members.length ? "ok" : avail ? "warn" : "bad") }, avail + "/" + vm.members.length + " 可用"),
+        caps.context_length ? h("span", { class: "chip" }, fmtTokens(caps.context_length) + " 上下文") : null,
+        (caps.input_modalities || []).filter((m) => m !== "text").map((m) => h("span", { class: "chip" }, m))),
+      h("div", { class: "members mono" }, vm.members.map((m) => m.model).join(" → ")));
+  });
+  view.replaceChildren(
+    h("div", { class: "panel" },
+      h("h2", {}, "组合模型"),
+      h("p", { class: "hint" }, "把多个模型合并成一个新名字。成员额度用尽、限流或被降级时会进入冷却并被跳过。组合模型会以下面声明的能力出现在 /v1/models 中。"),
+      state.modelsError ? h("div", { class: "warnbox" }, state.modelsError) : null,
+      h("div", { class: "cards" }, cards, h("div", { class: "card new", tabindex: "0", onclick: () => openEditor(-1), onkeydown: (e) => { if (e.key === "Enter") openEditor(-1); } }, "+ 新建组合模型"))));
+}
+function openEditor(index) {
+  const cfg = state.status.config;
+  const vm = index >= 0 ? clone(cfg.virtual_models[index]) : { name: "", strategy: "fallback", members: [], when_all_cooling: "soonest", max_attempts: 0, failover_on_client_error: false, guard: false, capabilities: { input_modalities: ["text"], output_modalities: ["text"] } };
+  vm.capabilities = vm.capabilities || {};
+  state.editing = { index, vm, original: index >= 0 ? cfg.virtual_models[index].name : "" };
+  render();
+}
+function deriveCapabilities(vm) {
+  const infos = vm.members.map((m) => state.modelInfo.get(lower(m.model)));
+  const known = infos.filter(Boolean);
+  const unknown = vm.members.filter((m, i) => !infos[i]).map((m) => m.model);
+  const min = (key) => { const vals = known.map((i) => i[key]).filter((v) => v > 0); return vals.length === known.length && vals.length ? Math.min(...vals) : 0; };
+  const caps = vm.capabilities;
+  const ctx = min("context"), out = min("output");
+  if (ctx) caps.context_length = ctx;
+  if (out) caps.max_output_tokens = out;
+  if (known.length && known.every((i) => (i.inputModalities || []).length)) {
+    caps.input_modalities = MODALITIES.filter((mo) => known.every((i) => i.inputModalities.includes(mo)));
+    if (!caps.input_modalities.includes("text")) caps.input_modalities.unshift("text");
+  }
+  const notes = [];
+  if (unknown.length) notes.push("以下成员不在 cpa 模型列表中，未参与推导：" + unknown.join("、"));
+  if (known.some((i) => !i.context)) notes.push("部分成员没有上报上下文长度，请手动确认。");
+  return notes;
+}
+function capabilityWarnings(vm) {
+  const caps = vm.capabilities || {};
+  const warns = [];
+  for (const m of vm.members) {
+    const i = state.modelInfo.get(lower(m.model));
+    if (!i) continue;
+    if (caps.context_length && i.context && i.context < caps.context_length) warns.push(m.model + " 的上下文只有 " + fmtTokens(i.context) + "，小于声明的 " + fmtTokens(caps.context_length));
+    if (caps.max_output_tokens && i.output && i.output < caps.max_output_tokens) warns.push(m.model + " 的最大输出只有 " + fmtTokens(i.output) + "，小于声明的 " + fmtTokens(caps.max_output_tokens));
+    for (const mo of caps.input_modalities || []) if (mo !== "text" && (i.inputModalities || []).length && !i.inputModalities.includes(mo)) warns.push(m.model + " 不支持输入 " + mo);
+  }
+  return warns;
+}
+function attemptPreview(vm) {
+  if (!vm.members.length) return [h("span", { class: "hint" }, "还没有成员")];
+  const cooling = (m) => !!cooldownOf(m.model);
+  const avail = vm.members.filter((m) => !cooling(m));
+  const parts = [];
+  if (vm.strategy === "fallback") {
+    (avail.length ? avail : vm.members).forEach((m, i) => { if (i) parts.push("→"); parts.push(h("span", { class: "chip" }, m.model)); });
+  } else if (vm.strategy === "weighted") {
+    const total = avail.reduce((s, m) => s + (m.weight || 1), 0) || 1;
+    avail.forEach((m) => parts.push(h("span", { class: "chip" }, m.model + " " + Math.round(100 * (m.weight || 1) / total) + "%")));
+  } else {
+    parts.push(h("span", { class: "hint" }, vm.strategy === "random" ? "随机顺序：" : "从下一个成员开始轮转："));
+    avail.forEach((m) => parts.push(h("span", { class: "chip" }, m.model)));
+  }
+  const skipped = vm.members.filter(cooling);
+  if (skipped.length && avail.length) parts.push(h("span", { class: "hint" }, "（跳过冷却中：" + skipped.map((m) => m.model).join("、") + "）"));
+  if (!avail.length) parts.push(h("span", { class: "chip warn" }, "全部冷却中：" + (vm.when_all_cooling === "fail" ? "直接返回 429" : "按恢复时间先后尝试")));
+  return parts;
+}
+function renderEditor(view) {
+  const ed = state.editing, vm = ed.vm, cfg = state.status.config;
+  const caps = vm.capabilities;
+  const rerender = () => renderEditor(view);
+  let dragFrom = -1;
+  const memberRow = (m, i) => {
+    const rule = guardRuleFor(m.model, cfg);
+    const guarded = vm.guard || rule || (m.expect && m.expect.length) || (m.deny && m.deny.length);
+    const row = h("div", { class: "member", draggable: "true",
+      ondragstart: () => { dragFrom = i; row.classList.add("dragging"); },
+      ondragend: () => row.classList.remove("dragging"),
+      ondragover: (e) => { e.preventDefault(); row.classList.add("over"); },
+      ondragleave: () => row.classList.remove("over"),
+      ondrop: (e) => { e.preventDefault(); if (dragFrom >= 0 && dragFrom !== i) { const [x] = vm.members.splice(dragFrom, 1); vm.members.splice(i, 0, x); } rerender(); } },
+      h("div", { class: "handle", title: "拖动排序" }, "⋮⋮"),
+      h("div", {}, h("div", { class: "name mono" }, m.model), h("div", { class: "meta" }, modelMeta(m.model), guarded ? h("span", { class: "chip accent", title: rule ? "规则 " + rule.model : "" }, "防降级") : null)),
+      h("div", { class: "ctl" },
+        vm.strategy === "weighted" ? h("label", { class: "check", title: "权重" }, "权重", h("input", { type: "number", min: "1", value: m.weight || 1, oninput: (e) => { m.weight = Math.max(1, parseInt(e.target.value) || 1); } })) : null,
+        h("label", { class: "check", title: "检测到降级后，在该成员上额外重试的次数" }, "重试", h("input", { type: "number", min: "0", value: m.max_retries || 0, oninput: (e) => { m.max_retries = Math.max(0, parseInt(e.target.value) || 0); } }))),
+      h("div", { class: "ctl" }, cooldownChip(m.model), cooldownOf(m.model) ? h("button", { class: "btn small", onclick: () => resetCooldown(m.model) }, "解除") : null),
+      h("div", { class: "ctl" },
+        h("button", { class: "btn small", title: "上移", disabled: i === 0, onclick: () => { [vm.members[i - 1], vm.members[i]] = [vm.members[i], vm.members[i - 1]]; rerender(); } }, "↑"),
+        h("button", { class: "btn small", title: "下移", disabled: i === vm.members.length - 1, onclick: () => { [vm.members[i + 1], vm.members[i]] = [vm.members[i], vm.members[i + 1]]; rerender(); } }, "↓"),
+        h("button", { class: "btn small danger", title: "移除", onclick: () => { vm.members.splice(i, 1); rerender(); } }, "✕")));
+    row.style.gridTemplateColumns = "26px minmax(160px,1fr) auto auto auto";
+    return row;
+  };
+  const warns = capabilityWarnings(vm);
+  const notesBox = h("div", {});
+  const modalityBoxes = (key) => h("div", { class: "row" }, MODALITIES.map((mo) => h("label", { class: "check" },
+    h("input", { type: "checkbox", checked: (caps[key] || []).includes(mo), disabled: mo === "text" && key === "input_modalities", onchange: (e) => {
+      const set = new Set(caps[key] || []);
+      e.target.checked ? set.add(mo) : set.delete(mo);
+      caps[key] = MODALITIES.filter((x) => set.has(x));
+      rerender();
+    } }), mo)));
+  const num = (key, ph) => h("input", { type: "number", min: "0", placeholder: ph, value: caps[key] || "", oninput: (e) => { caps[key] = parseInt(e.target.value) || 0; } });
+  view.replaceChildren(h("div", { class: "panel" },
+    h("div", { class: "row" }, h("button", { class: "btn small", onclick: () => { state.editing = null; render(); } }, "← 返回"), h("h2", {}, ed.index >= 0 ? "编辑组合模型" : "新建组合模型")),
+    h("div", { class: "grid", style: "margin-top:14px" },
+      h("label", { class: "field" }, h("span", {}, "名称（客户端请求时使用）"), h("input", { type: "text", class: "mono", value: vm.name, placeholder: "例如 smart", oninput: (e) => { vm.name = e.target.value.trim(); } })),
+      h("label", { class: "field" }, h("span", {}, "显示名称"), h("input", { type: "text", value: caps.display_name || "", oninput: (e) => { caps.display_name = e.target.value; } }))),
+    h("h3", {}, "调度策略"),
+    h("div", { class: "segmented" }, STRATEGIES.map(([v, label]) => h("button", { class: vm.strategy === v ? "active" : "", onclick: () => { vm.strategy = v; rerender(); } }, label))),
+    h("p", { class: "hint", style: "margin-top:6px" }, { fallback: "总是从第一个可用成员开始，失败再依次尝试后面的。适合 Agent：同一模型连续服务，提示词缓存不失效。", "round-robin": "每次请求从下一个成员开始，平均分摊负载。", random: "每次随机打乱成员顺序。", weighted: "按权重随机选第一个成员，其余作为后备。" }[vm.strategy]),
+    h("h3", {}, "成员（" + vm.members.length + "）"),
+    h("div", {}, vm.members.map(memberRow)),
+    modelPicker({ placeholder: "+ 添加成员：搜索 cpa 中的模型，或输入名称后回车", exclude: () => new Set(vm.members.map((m) => lower(m.model)).concat([lower(vm.name)])), onPick: (id) => { vm.members.push({ model: id, weight: 1 }); rerender(); } }),
+    h("label", { class: "check", style: "margin-top:10px" }, h("input", { type: "checkbox", checked: vm.guard, onchange: (e) => { vm.guard = e.target.checked; rerender(); } }), "检查所有成员的实际模型（成员被降级时冷却并切换；未勾选时只检查命中防降级规则的成员）"),
+    h("h3", {}, "下一个请求的尝试顺序"),
+    h("div", { class: "preview" }, attemptPreview(vm)),
+    h("h3", {}, "对外声明的能力"),
+    h("p", { class: "hint" }, "客户端和 Agent 只看到组合模型名，靠这里的能力判断上下文长度、是否多模态。建议取所有成员的最小公共能力。"),
+    h("div", { class: "row" }, h("button", { class: "btn", disabled: !vm.members.length, onclick: () => { const notes = deriveCapabilities(vm); rerender(); if (notes.length) toast(notes.join(" "), "warn"); else toast("已按成员的最小公共能力填写"); } }, "从成员推导"), notesBox),
+    h("div", { class: "grid", style: "margin-top:10px" },
+      h("label", { class: "field" }, h("span", {}, "上下文长度（token）"), num("context_length", "例如 200000")),
+      h("label", { class: "field" }, h("span", {}, "最大输出（token）"), num("max_output_tokens", "例如 32000")),
+      h("label", { class: "field" }, h("span", {}, "思考档位（逗号分隔）"), h("input", { type: "text", placeholder: "low, medium, high", value: ((caps.thinking && caps.thinking.levels) || []).join(", "), oninput: (e) => { const lv = splitList(e.target.value); caps.thinking = lv.length ? { ...(caps.thinking || {}), levels: lv } : null; } })),
+      h("label", { class: "field" }, h("span", {}, "支持的参数（逗号分隔）"), h("input", { type: "text", placeholder: "tools, tool_choice, reasoning_effort", value: (caps.supported_parameters || []).join(", "), oninput: (e) => { caps.supported_parameters = splitList(e.target.value); } }))),
+    h("div", { class: "field", style: "margin-top:10px" }, h("span", { class: "hint", style: "margin:0" }, "输入模态"), modalityBoxes("input_modalities")),
+    h("div", { class: "field", style: "margin-top:6px" }, h("span", { class: "hint", style: "margin:0" }, "输出模态"), modalityBoxes("output_modalities")),
+    h("label", { class: "field", style: "margin-top:10px" }, h("span", {}, "描述"), h("input", { type: "text", value: caps.description || "", oninput: (e) => { caps.description = e.target.value; } })),
+    warns.length ? h("div", { class: "warnbox" }, h("b", {}, "部分成员达不到声明的能力："), h("ul", { style: "margin:4px 0 0 18px;padding:0" }, warns.map((w) => h("li", {}, w)))) : null,
+    h("details", {}, h("summary", {}, "高级"),
+      h("div", { class: "grid" },
+        h("label", { class: "field" }, h("span", {}, "全部成员都在冷却时"), h("select", { onchange: (e) => { vm.when_all_cooling = e.target.value; } },
+          h("option", { value: "soonest", selected: vm.when_all_cooling !== "fail" }, "按恢复时间先后尝试"),
+          h("option", { value: "fail", selected: vm.when_all_cooling === "fail" }, "直接返回 429"))),
+        h("label", { class: "field" }, h("span", {}, "单个请求最多尝试次数（0 = 每个成员一次）"), h("input", { type: "number", min: "0", value: vm.max_attempts || 0, oninput: (e) => { vm.max_attempts = Math.max(0, parseInt(e.target.value) || 0); } }))),
+      h("label", { class: "check", style: "margin-top:8px" }, h("input", { type: "checkbox", checked: vm.failover_on_client_error, onchange: (e) => { vm.failover_on_client_error = e.target.checked; } }), "普通 4xx 错误（如上下文过长）也切换到下一个成员")),
+    h("div", { class: "actions" },
+      ed.index >= 0 ? h("button", { class: "btn danger", onclick: deleteVirtual }, "删除") : null,
+      h("div", { class: "spacer" }),
+      h("button", { class: "btn", onclick: () => { state.editing = null; render(); } }, "取消"),
+      h("button", { class: "btn primary", onclick: saveVirtual }, "保存"))));
+}
+async function saveVirtual(e) {
+  const ed = state.editing, vm = ed.vm;
+  const cfg = clone(state.status.config);
+  const list = cfg.virtual_models || [];
+  if (!vm.name) return toast("请填写组合模型名称", true);
+  if (!vm.members.length) return toast("至少需要一个成员", true);
+  if (list.some((v, i) => i !== ed.index && lower(v.name) === lower(vm.name))) return toast("已存在同名组合模型", true);
+  if (vm.members.some((m) => lower(m.model) === lower(vm.name))) return toast("成员不能是组合模型自身", true);
+  if (vm.members.some((m) => list.some((v) => lower(v.name) === lower(m.model)))) return toast("成员不能是另一个组合模型", true);
+  const real = state.modelInfo.get(lower(vm.name));
+  if (real && real.owner !== cfg.provider && !confirm("cpa 中已有名为 " + vm.name + " 的真实模型，组合模型会覆盖它的请求路由。继续？")) return;
+  if (ed.index >= 0) list[ed.index] = vm; else list.push(vm);
+  cfg.virtual_models = list;
+  e.target.disabled = true;
+  try { if (await save(cfg, "组合模型 " + vm.name + " 已保存")) state.editing = null; render(); }
+  catch (err) { toast("保存失败：" + err.message, true); }
+  finally { e.target.disabled = false; }
+}
+async function deleteVirtual() {
+  const ed = state.editing;
+  if (!confirm("删除组合模型 " + ed.original + "？客户端将无法再请求这个名字。")) return;
+  const cfg = clone(state.status.config);
+  cfg.virtual_models.splice(ed.index, 1);
+  try { if (await save(cfg, "已删除 " + ed.original)) state.editing = null; render(); }
+  catch (err) { toast("删除失败：" + err.message, true); }
+}
+
+/* ---------- 防降级与监控 ---------- */
+function renderGuard() {
+  const view = $("view-guard");
+  const cfg = clone(state.status.config);
+  const g = cfg.guard;
+  g.models = g.models || [];
+  const monitor = new Map((state.status.monitor || []).map((s) => [lower(s.model), s]));
+  const ruleRow = (r, i) => h("tr", {},
+    h("td", {}, h("input", { type: "text", class: "mono", value: r.model, oninput: (e) => { r.model = e.target.value.trim(); } })),
+    h("td", {}, h("input", { type: "text", class: "mono", placeholder: "默认 = 请求的模型名", value: (r.expect || []).join(", "), oninput: (e) => { r.expect = splitList(e.target.value); } })),
+    h("td", {}, h("input", { type: "text", class: "mono", placeholder: "例如 *mini*", value: (r.deny || []).join(", "), oninput: (e) => { r.deny = splitList(e.target.value); } })),
+    h("td", { style: "width:90px" }, h("input", { type: "number", min: "0", placeholder: "默认 " + g.max_retries, value: r.max_retries ?? "", oninput: (e) => { r.max_retries = e.target.value === "" ? null : Math.max(0, parseInt(e.target.value) || 0); } })),
+    h("td", {}, h("button", { class: "btn small danger", onclick: () => { g.models.splice(i, 1); draw(); } }, "✕")));
+  const rows = () => {
+    const names = new Map();
+    for (const m of realModels()) names.set(lower(m.id), m.id);
+    for (const s of state.status.monitor || []) if (!names.has(lower(s.model))) names.set(lower(s.model), s.model);
+    let list = [...names.values()].map((id) => ({ id, rule: guardRuleFor(id, cfg), stat: monitor.get(lower(id)) }));
+    if (state.filter) list = list.filter((x) => lower(x.id).includes(lower(state.filter)));
+    if (state.onlyMismatch) list = list.filter((x) => x.stat && x.stat.mismatches);
+    list.sort((a, b) => ((b.stat?.mismatches || 0) - (a.stat?.mismatches || 0)) || ((b.stat?.requests || 0) - (a.stat?.requests || 0)) || a.id.localeCompare(b.id));
+    return list.map(({ id, rule, stat }) => h("tr", {},
+      h("td", {}, h("div", { class: "mono" }, id), h("div", { class: "row" }, modelMeta(id))),
+      h("td", {}, rule ? h("span", { class: "chip accent", title: "规则 " + rule.model }, "受保护 · " + rule.model) : h("span", { class: "chip" }, "仅监控")),
+      h("td", { class: "num" }, stat ? stat.requests : "—"),
+      h("td", { class: "num" }, stat && stat.reported ? h("span", { class: "chip " + (stat.mismatches ? "bad" : "ok") }, (100 * stat.mismatch_rate).toFixed(stat.mismatches ? 1 : 0) + "%") : "—"),
+      h("td", {}, stat && (stat.served || []).length ? stat.served.slice(0, 4).map((s) => h("div", { class: "mono", style: "font-size:12px" }, s.model + " ×" + s.count)) : h("span", { class: "hint" }, stat ? "未上报" : "暂无请求")),
+      h("td", {}, rule ? null : h("button", { class: "btn small", onclick: () => { g.models.push({ model: id }); draw(); toast("已添加规则，记得保存"); } }, "保护"))));
+  };
+  const draw = () => view.replaceChildren(
+    h("div", { class: "panel" },
+      h("h2", {}, "防降级规则"),
+      h("p", { class: "hint" }, "命中规则的模型会由 OrangeGuard 接管：检查响应里实际处理的模型，被换成别的模型时重试，仍不行则返回 503，不把错误模型交给客户端。默认保护 OpenAI 系列。只保护需要的模型：被接管的请求，count_tokens 会变成估算值，重试也会计费。"),
+      h("div", { class: "grid" },
+        h("label", { class: "field" }, h("span", {}, "检测到降级后的重试次数"), h("input", { type: "number", min: "0", value: g.max_retries, oninput: (e) => { g.max_retries = Math.max(0, parseInt(e.target.value) || 0); } })),
+        h("label", { class: "field" }, h("span", {}, "重试间隔（毫秒）"), h("input", { type: "number", min: "0", value: g.retry_delay_ms, oninput: (e) => { g.retry_delay_ms = Math.max(0, parseInt(e.target.value) || 0); } })),
+        h("label", { class: "field" }, h("span", {}, "响应没有模型字段时"), h("select", { onchange: (e) => { g.on_missing_model = e.target.value; } },
+          h("option", { value: "accept", selected: g.on_missing_model !== "reject" }, "放行"), h("option", { value: "reject", selected: g.on_missing_model === "reject" }, "视为降级")))),
+      h("div", { class: "table-wrap", style: "margin-top:14px" }, h("table", {},
+        h("thead", {}, h("tr", {}, h("th", {}, "模型（支持 * ?）"), h("th", {}, "接受的实际模型"), h("th", {}, "一律拒绝"), h("th", {}, "重试"), h("th", {}))),
+        h("tbody", {}, g.models.length ? g.models.map(ruleRow) : h("tr", {}, h("td", { colspan: "5", class: "empty" }, "没有规则：所有模型只监控，不拦截"))))),
+      h("div", { class: "actions" },
+        h("button", { class: "btn", onclick: () => { g.models.push({ model: "" }); draw(); } }, "+ 添加规则"),
+        h("button", { class: "btn", onclick: () => { const have = new Set(g.models.map((r) => lower(r.model))); for (const pat of ["gpt-*", "chatgpt-*", "o1*", "o3*", "o4*"]) if (!have.has(pat)) g.models.push({ model: pat }); draw(); } }, "加入 OpenAI 默认规则"),
+        h("div", { class: "spacer" }),
+        h("button", { class: "btn primary", onclick: async (e) => {
+          if (g.models.some((r) => !r.model)) return toast("规则的模型不能为空", true);
+          e.target.disabled = true;
+          try { await save(cfg, "防降级规则已保存"); } catch (err) { toast("保存失败：" + err.message, true); } finally { e.target.disabled = false; }
+        } }, "保存规则"))),
+    h("div", { class: "panel" },
+      h("div", { class: "row" }, h("h2", {}, "模型监控"), h("div", { class: "spacer" }),
+        h("label", { class: "check" }, h("input", { type: "checkbox", checked: state.onlyMismatch, onchange: (e) => { state.onlyMismatch = e.target.checked; draw(); } }), "只看出现过降级的"),
+        h("input", { type: "text", placeholder: "筛选模型", value: state.filter, style: "max-width:200px", oninput: (e) => { state.filter = e.target.value; const pos = e.target.selectionStart; draw(); const el = view.querySelector('input[placeholder="筛选模型"]'); el.focus(); el.setSelectionRange(pos, pos); } }),
+        h("button", { class: "btn small", onclick: async () => { if (!confirm("清空监控统计？")) return; await api("POST", API + "/plugins/orangeguard/monitor/reset", {}); await loadStatus(); render(); } }, "清空统计")),
+      h("p", { class: "hint" }, cfg.monitor.enabled
+        ? "根据 cpa 的用量记录，被动统计每个模型实际是由哪个模型处理的，不拦截、不增加延迟。自 " + fmtTime(state.status.monitor_since) + " 起统计；cpa 重启后清零。发现降级率高的模型，点「保护」加入规则。"
+        : "监控已关闭，可在「冷却与设置」中开启。"),
+      h("div", { class: "table-wrap" }, h("table", {},
+        h("thead", {}, h("tr", {}, h("th", {}, "模型"), h("th", {}, "状态"), h("th", { style: "text-align:right" }, "请求"), h("th", { style: "text-align:right" }, "降级率"), h("th", {}, "实际处理的模型"), h("th", {}))),
+        h("tbody", {}, (() => { const r = rows(); return r.length ? r : h("tr", {}, h("td", { colspan: "6", class: "empty" }, "暂无数据")); })())))));
+  draw();
+}
+
+/* ---------- 冷却与设置 ---------- */
+function renderCooldown() {
+  const view = $("view-cooldown");
+  const cfg = clone(state.status.config);
+  const cd = cfg.cooldown;
+  cd.enabled = cd.enabled !== false;
+  cd.honor_retry_after = cd.honor_retry_after !== false;
+  const sec = (key, label, hint) => h("label", { class: "field", title: hint || "" }, h("span", {}, label), h("input", { type: "number", min: "0", value: cd[key], oninput: (e) => { cd[key] = Math.max(0, parseInt(e.target.value) || 0); } }));
+  const entries = state.status.cooldowns || [];
+  view.replaceChildren(
+    h("div", { class: "panel" },
+      h("div", { class: "row" }, h("h2", {}, "当前冷却"), h("div", { class: "spacer" }), entries.some((c) => c.cooling_down) ? h("button", { class: "btn small", onclick: () => resetCooldown("") }, "全部解除") : null),
+      h("p", { class: "hint" }, "按上游模型记录，所有组合模型共用。直接请求某个模型不受冷却限制。"),
+      h("div", { class: "table-wrap" }, h("table", {},
+        h("thead", {}, h("tr", {}, h("th", {}, "模型"), h("th", {}, "状态"), h("th", {}, "最近错误"), h("th", { style: "text-align:right" }, "失败/成功"), h("th", {}))),
+        h("tbody", {}, entries.length ? entries.map((c) => h("tr", {},
+          h("td", { class: "mono" }, c.model),
+          h("td", {}, cooldownChip(c.model)),
+          h("td", { style: "max-width:420px;word-break:break-all;font-size:12px", class: "hint" }, c.last_error || ""),
+          h("td", { class: "num" }, c.failures + " / " + c.successes),
+          h("td", {}, c.cooling_down ? h("button", { class: "btn small", onclick: () => resetCooldown(c.model) }, "解除") : null))) : h("tr", {}, h("td", { colspan: "5", class: "empty" }, "还没有记录")))))),
+    h("div", { class: "panel" },
+      h("h2", {}, "冷却策略"),
+      h("p", { class: "hint" }, "成员失败后被跳过的时长（秒）。同类连续失败会按倍数延长，任何一次成功即清零。上游返回的重置时间（如 resets_in_seconds、retryDelay、try again in 20m）优先。"),
+      h("div", { class: "row" },
+        h("label", { class: "check" }, h("input", { type: "checkbox", checked: cd.enabled, onchange: (e) => { cd.enabled = e.target.checked; } }), "启用冷却"),
+        h("label", { class: "check" }, h("input", { type: "checkbox", checked: cd.honor_retry_after, onchange: (e) => { cd.honor_retry_after = e.target.checked; } }), "使用上游返回的重置时间")),
+      h("div", { class: "grid", style: "margin-top:12px" },
+        sec("quota_seconds", "额度用尽"), sec("rate_limit_seconds", "限流 429"), sec("auth_seconds", "鉴权失败 401/403"),
+        sec("not_found_seconds", "模型不可用 / 未定价"), sec("server_error_seconds", "上游 5xx / 超时"), sec("mismatch_seconds", "被降级"),
+        h("label", { class: "field" }, h("span", {}, "连续几次 5xx 才冷却"), h("input", { type: "number", min: "1", value: cd.server_error_threshold, oninput: (e) => { cd.server_error_threshold = Math.max(1, parseInt(e.target.value) || 1); } })),
+        h("label", { class: "field" }, h("span", {}, "连续失败延长倍数"), h("input", { type: "number", min: "1", step: "0.5", value: cd.backoff_multiplier, oninput: (e) => { cd.backoff_multiplier = Math.max(1, parseFloat(e.target.value) || 1); } })),
+        sec("max_seconds", "最长冷却")),
+      h("h3", {}, "模型监控"),
+      h("label", { class: "check" }, h("input", { type: "checkbox", checked: cfg.monitor.enabled, onchange: (e) => { cfg.monitor.enabled = e.target.checked; } }), "根据用量记录统计每个模型实际由哪个模型处理（不拦截、不增加延迟）"),
+      h("div", { class: "actions" }, h("button", { class: "btn primary", onclick: async (e) => {
+        e.target.disabled = true;
+        try { await save(cfg, "设置已保存"); } catch (err) { toast("保存失败：" + err.message, true); } finally { e.target.disabled = false; }
+      } }, "保存设置"))));
+}
+
+/* ---------- shell ---------- */
+function render() {
+  for (const b of document.querySelectorAll("#tabs button")) b.classList.toggle("active", b.dataset.tab === state.tab);
+  for (const t of ["virtual", "guard", "cooldown"]) $("view-" + t).classList.toggle("hidden", t !== state.tab || !state.status);
+  if (!state.status) return;
+  ({ virtual: renderVirtual, guard: renderGuard, cooldown: renderCooldown })[state.tab]();
+}
+async function boot(key) {
+  state.key = key;
+  try {
+    await loadStatus();
+  } catch (e) {
+    if (e.status === 401 || e.status === 403 || !key) {
+      $("login").classList.remove("hidden");
+      $("login-error").textContent = key ? "管理密钥无效或已过期。" : "";
+      $("tabs").classList.add("hidden");
+      return;
+    }
+    $("status-line").textContent = "无法读取状态：" + e.message;
+    return;
+  }
+  $("login").classList.add("hidden");
+  $("tabs").classList.remove("hidden");
+  render();
+  await loadModels();
+  render();
+}
+document.body.classList.toggle("embedded", window.parent !== window);
+applyTheme();
+try { state.tab = (location.hash.slice(1) || sessionStorage.getItem("orangeguard.tab") || "virtual").replace(/[^a-z]/g, "") || "virtual"; } catch (_) {}
+if (!["virtual", "guard", "cooldown"].includes(state.tab)) state.tab = "virtual";
+$("tabs").addEventListener("click", (e) => {
+  const tab = e.target.dataset && e.target.dataset.tab;
+  if (!tab) return;
+  state.tab = tab; state.editing = null;
+  try { sessionStorage.setItem("orangeguard.tab", tab); } catch (_) {}
+  history.replaceState(null, "", "#" + tab);
+  render();
+});
+$("refresh").addEventListener("click", async () => { try { await loadStatus(); await loadModels(); render(); toast("已刷新"); } catch (e) { toast(e.message, true); } });
+$("login-btn").addEventListener("click", () => {
+  const key = $("login-key").value.trim();
+  if (!key) return;
+  try { sessionStorage.setItem("orangeguard.key", key); } catch (_) {}
+  boot(key);
+});
+$("login-key").addEventListener("keydown", (e) => { if (e.key === "Enter") $("login-btn").click(); });
+boot(panelKey());
+</script>
+</body>
+</html>

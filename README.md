@@ -7,16 +7,19 @@
 
 两个功能共用同一套检测与冷却逻辑：虚拟模型的成员同样可以开启防降级，被降级的成员会被冷却并切到下一个成员。
 
+另外有一个**被动监控**：根据 cpa 的用量记录，统计每个模型实际是由哪个模型处理的、降级率多少，不拦截、不增加延迟，用来决定哪些模型值得加入防降级。所有设置都可以在 cpa 管理中心的 **OrangeGuard** 页面里完成（见「配置界面」）。
+
 ## 工作原理
 
-插件同时注册四种能力：
+插件同时注册以下能力：
 
 | 能力 | 作用 |
 |---|---|
 | `model_router` | 只认领配置里的虚拟模型和受保护模型（`TargetKind=self`），其它请求原样交还 cpa，零干预 |
 | `executor` | 掌控执行循环：通过 `host.model.execute` / `execute_stream` 让 cpa 去请求成员模型（复用 cpa 的凭据、alias、代理、日志、用量统计），检查响应，决定接受 / 重试 / 切换 |
 | `model_registrar` | 把虚拟模型及其能力注册进 cpa 模型表，出现在 `/v1/models`（OpenAI / Claude / Gemini 各格式） |
-| `management_api` | 提供冷却状态查询与手动清除接口 |
+| `usage_plugin` | 接收 cpa 的用量记录，被动统计请求的模型与实际处理的模型（监控） |
+| `management_api` | 配置页面（cpa 管理中心菜单「OrangeGuard」）、状态查询、冷却与监控清除接口 |
 
 ```
 客户端 ── model=C ──▶ cpa ──model.route──▶ orangeguard（认领 C）
@@ -91,6 +94,22 @@ sudo bash install-cpa-plugins.sh --rollback /opt/cpa/backups/plugins-<时间>   
 
 已在 cpa v8.0.15 官方镜像上完整演练：插件商店安装的原版 key-billing（带版本号文件名与版本锁定）+ 只装 orangeguard、热加载规则、防降级、虚拟模型切换与计费、原地升级、回滚。
 
+## 配置界面
+
+安装后，cpa 管理中心的插件菜单里会出现 **OrangeGuard**（地址 `/v0/resource/plugins/orangeguard/ui`）。页面沿用管理中心的登录状态；单独打开时输入管理密钥即可。三个标签页：
+
+- **组合模型**：卡片列出所有组合模型及可用成员数。编辑页可以：
+  - 从 cpa 的真实模型列表搜索添加成员（显示渠道、上下文、多模态），拖动或用 ↑↓ 排序；
+  - 选择调度策略（按顺序回退 / 轮询 / 随机 / 加权），加权时为每个成员设权重；
+  - 查看每个成员的实时冷却状态并一键解除，预览下一个请求的尝试顺序；
+  - 「从成员推导」能力：取所有成员最小的上下文和最大输出、所有成员都支持的输入模态，每项都可手动改；声明的能力超过某个成员时给出警告。
+- **防降级与监控**：编辑防降级规则；下方的模型监控表列出每个模型的请求数、降级率、实际处理的模型，降级率高的点「保护」即加入规则。
+- **冷却与设置**：当前冷却表（可逐个或全部解除）、各类失败的冷却时长、监控开关。
+
+保存时页面通过 cpa 自带的插件配置接口（`PATCH /v0/management/plugins/orangeguard/config`）写回 `config.yaml`，cpa 热加载，不需要重启；OrangeGuard 不另存数据。
+
+模型列表来自 cpa 的 `/v1/models` 与 `/v1beta/models`：cpa 的管理接口没有带元数据的完整模型列表，所以页面会用配置里的第一个客户端 API Key 去读取。没有配置 API Key 时，可以直接输入模型名。
+
 ## 配置
 
 完整带注释的示例见 [`config.example.yaml`](config.example.yaml)。最小示例：
@@ -103,9 +122,7 @@ plugins:
     orangeguard:
       enabled: true
       priority: 50
-      guard:
-        models:
-          - model: "gpt-6-astra"          # 返回的 model 必须是 gpt-6-astra（或其日期快照）
+      # guard.models 不写时默认保护 OpenAI 系列（见下文）
       virtual_models:
         - name: "astra-auto"
           strategy: fallback
@@ -128,6 +145,7 @@ plugins:
 | `max_retries` | `3` | 直接请求受保护模型时，检测到被替换后在同一模型上额外重试的次数 |
 | `retry_delay_ms` | `200` | 重试间隔 |
 | `on_missing_model` | `accept` | 响应里没有模型字段时：`accept` 放行（fail-open），`reject` 视为被替换 |
+| `models` | OpenAI 系列 | 防降级规则列表。**不写时默认为** `gpt-*`、`chatgpt-*`、`o1*`、`o3*`、`o4*`；写了就完全替换默认值；写 `[]` 表示不保护任何模型 |
 | `models[].model` | — | 客户端请求的模型名，支持 `*` `?` 通配 |
 | `models[].expect` | 请求的模型名 | 可接受的处理模型（字符串或列表，支持通配）。别名与上游名毫无字面关系时才需要写 |
 | `models[].deny` | — | 一律拒绝的处理模型（通配），优先级高于 `expect`，例如 `["*mini*", "*flash*"]` |
@@ -146,6 +164,16 @@ plugins:
 | `gpt-5` | `gpt-5.5` | ❌ | `.` 引入的是另一个小版本 |
 | `claude-opus-4` | `claude-opus-4-1` | ❌ | 短数字后缀视为另一个版本 |
 | `glm-5.2` | `glm-5.21` | ❌ | 没有分隔边界 |
+
+**为什么默认不保护所有模型**：被保护的请求由 OrangeGuard 接管执行，`count_tokens` 只能估算（Claude Code 依赖它管理上下文）；很多渠道上报的模型名与请求的不一致（alias、`models/` 前缀、内部名），全部保护容易误判成降级；重试也会计费。所以默认只保护 OpenAI 系列，其余模型由监控观察，按数据决定是否加入。
+
+### 监控 `monitor`
+
+| 字段 | 默认 | 说明 |
+|---|---|---|
+| `enabled` | `true` | 根据 cpa 用量记录统计每个上游模型：请求数、失败数、实际处理的模型及次数、降级率、最近一次降级 |
+
+统计只在内存中，cpa 重启后清零，最多记录 1000 个模型，每个模型保留最常见的 8 个实际模型名。
 
 处理模型的读取位置：OpenAI 顶层 `model`、Claude `model` / `message_start.message.model`、OpenAI Responses `response.model`、Gemini `modelVersion`。读取的是 cpa 翻译后返回给客户端格式的响应。
 
@@ -208,9 +236,13 @@ cpa 不会、也无法从成员推导一个新名字的能力，所以需要在�
 需要 cpa 管理密钥：
 
 ```bash
-# 查看受保护模型、虚拟模型成员可用性、冷却表
+# 查看生效配置（含默认值）、虚拟模型成员可用性、冷却表、监控统计
 curl -H "Authorization: Bearer <management-key>" \
   http://127.0.0.1:8317/v0/management/plugins/orangeguard/status
+
+# 清空监控统计
+curl -X POST -H "Authorization: Bearer <management-key>" \
+  http://127.0.0.1:8317/v0/management/plugins/orangeguard/monitor/reset
 
 # 清除某个模型的冷却（body 为空则清除全部）
 curl -X POST -H "Authorization: Bearer <management-key>" \

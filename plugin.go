@@ -11,6 +11,7 @@ import (
 
 	"github.com/woyin/orangeguard/internal/config"
 	"github.com/woyin/orangeguard/internal/engine"
+	"github.com/woyin/orangeguard/internal/ui"
 )
 
 const pluginIdentifier = "orangeguard"
@@ -43,6 +44,7 @@ type registrationCapability struct {
 	ExecutorInputFormats  []string `json:"executor_input_formats"`
 	ExecutorOutputFormats []string `json:"executor_output_formats"`
 	ManagementAPI         bool     `json:"management_api"`
+	UsagePlugin           bool     `json:"usage_plugin"`
 }
 
 type rpcExecutorRequest struct {
@@ -66,6 +68,16 @@ type managementRoute struct {
 	Path        string
 	Description string `json:",omitempty"`
 }
+
+type resourceRoute struct {
+	Path        string
+	Menu        string
+	Description string `json:",omitempty"`
+}
+
+// uiResourcePath is the management page, served under
+// /v0/resource/plugins/orangeguard/ui and listed in the cpa menu.
+const uiResourcePath = "/ui"
 
 // Formats the executor accepts and returns. Requests are replayed through the
 // host in their original client format, so no translation happens here.
@@ -93,10 +105,18 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 	case pluginabi.MethodExecutorCountTokens:
 		return countTokens(request)
 	case pluginabi.MethodManagementRegister:
-		return okEnvelope(map[string]any{"routes": []managementRoute{
-			{Method: http.MethodGet, Path: engine.StatusPath, Description: "orangeguard guard/virtual-model/cooldown status"},
-			{Method: http.MethodPost, Path: engine.ResetPath, Description: "Clear cooldowns: body {\"model\":\"name\"} or empty for all"},
-		}})
+		return okEnvelope(map[string]any{
+			"routes": []managementRoute{
+				{Method: http.MethodGet, Path: engine.StatusPath, Description: "orangeguard configuration, monitor, guard/virtual-model and cooldown status"},
+				{Method: http.MethodPost, Path: engine.ResetPath, Description: "Clear cooldowns: body {\"model\":\"name\"} or empty for all"},
+				{Method: http.MethodPost, Path: engine.MonitorResetPath, Description: "Clear served-model monitor statistics"},
+			},
+			"resources": []resourceRoute{
+				{Path: uiResourcePath, Menu: "OrangeGuard", Description: "Virtual models, downgrade guard, monitor and cooldowns"},
+			},
+		})
+	case pluginabi.MethodUsageHandle:
+		return handleUsage(request)
 	case pluginabi.MethodManagementHandle:
 		return handleManagement(request)
 	default:
@@ -146,6 +166,7 @@ func pluginRegistration() registration {
 			ExecutorInputFormats:  executorFormats,
 			ExecutorOutputFormats: executorFormats,
 			ManagementAPI:         true,
+			UsagePlugin:           true,
 		},
 	}
 }
@@ -254,10 +275,37 @@ func countTokens(raw []byte) ([]byte, error) {
 	return okEnvelope(pluginapi.ExecutorResponse{Payload: payload})
 }
 
+// handleUsage feeds cpa usage records to the passive served-model monitor.
+func handleUsage(raw []byte) ([]byte, error) {
+	var record pluginapi.UsageRecord
+	if errUnmarshal := json.Unmarshal(raw, &record); errUnmarshal != nil {
+		return nil, errUnmarshal
+	}
+	eng.RecordUsage(record.Model, record.Alias, record.ResponseModel, record.Failed)
+	return okEnvelope(map[string]any{})
+}
+
 func handleManagement(raw []byte) ([]byte, error) {
 	var req rpcManagementRequest
 	if errUnmarshal := json.Unmarshal(raw, &req); errUnmarshal != nil {
 		return nil, errUnmarshal
+	}
+	if strings.HasPrefix(req.Path, "/v0/resource/") {
+		// The page itself is public; every action it takes goes through
+		// /v0/management with the operator's management key.
+		if strings.TrimRight(req.Path, "/") != "/v0/resource/plugins/"+pluginIdentifier+uiResourcePath {
+			return okEnvelope(pluginapi.ManagementResponse{StatusCode: http.StatusNotFound, Body: []byte("not found")})
+		}
+		return okEnvelope(pluginapi.ManagementResponse{
+			StatusCode: http.StatusOK,
+			Headers: http.Header{
+				"Content-Type":            []string{"text/html; charset=utf-8"},
+				"Cache-Control":           []string{"no-store"},
+				"X-Content-Type-Options":  []string{"nosniff"},
+				"Content-Security-Policy": []string{"default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'self'"},
+			},
+			Body: ui.Page,
+		})
 	}
 	status, body := eng.HandleManagement(strings.ToUpper(req.Method), req.Path, req.Query, req.Body)
 	return okEnvelope(pluginapi.ManagementResponse{

@@ -116,3 +116,28 @@ func TestExampleConfig(t *testing.T) {
 		t.Fatalf("example config parsed unexpectedly: %d virtual, %d guard", len(cfg.VirtualModels), len(cfg.Guard.Models))
 	}
 }
+
+func TestDefaultGuardModelsAreReplacedNotMerged(t *testing.T) {
+	cfg, _, _ := Parse(nil)
+	if len(cfg.Guard.Models) != len(DefaultGuardModels()) || !cfg.Monitor.Enabled {
+		t.Fatalf("defaults: %+v", cfg.Guard.Models)
+	}
+	if _, ok := cfg.FindGuard("gpt-6-astra"); !ok {
+		t.Fatal("OpenAI models must be guarded by default")
+	}
+	if _, ok := cfg.FindGuard("claude-opus-5"); ok {
+		t.Fatal("non-OpenAI models must not be guarded by default")
+	}
+	cfg, _, _ = Parse([]byte("guard:\n  models:\n    - model: glm-5.2\n"))
+	if len(cfg.Guard.Models) != 1 || cfg.Guard.Models[0].Model != "glm-5.2" {
+		t.Fatalf("explicit list must replace defaults: %+v", cfg.Guard.Models)
+	}
+	cfg, _, _ = Parse([]byte("guard:\n  models: []\nmonitor:\n  enabled: false\n"))
+	if len(cfg.Guard.Models) != 0 || cfg.Monitor.Enabled {
+		t.Fatalf("empty list must disable guarding: %+v", cfg.Guard)
+	}
+	cfg, _, _ = Parse([]byte("guard:\n  max_retries: 1\n"))
+	if len(cfg.Guard.Models) != len(DefaultGuardModels()) || cfg.Guard.MaxRetries != 1 {
+		t.Fatalf("setting other guard fields keeps the default rules: %+v", cfg.Guard)
+	}
+}

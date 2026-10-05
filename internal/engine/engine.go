@@ -19,6 +19,7 @@ import (
 	"github.com/woyin/orangeguard/internal/config"
 	"github.com/woyin/orangeguard/internal/cooldown"
 	"github.com/woyin/orangeguard/internal/detect"
+	"github.com/woyin/orangeguard/internal/monitor"
 )
 
 // maxConcurrentExecutions is a circuit breaker: if the host ever failed to
@@ -97,6 +98,7 @@ type Engine struct {
 	host     Host
 	cfg      atomic.Pointer[config.Config]
 	Cooldown *cooldown.Store
+	Monitor  *monitor.Recorder
 	counters sync.Map // virtual model name -> *atomic.Uint64
 	active   atomic.Int64
 
@@ -111,6 +113,7 @@ func New(host Host) *Engine {
 	e := &Engine{
 		host:     host,
 		Cooldown: cooldown.New(nil),
+		Monitor:  monitor.New(nil),
 		sleep:    time.Sleep,
 		shuffle:  rand.Shuffle,
 		float:    rand.Float64,
@@ -125,6 +128,13 @@ func (e *Engine) SetConfig(cfg config.Config) { e.cfg.Store(&cfg) }
 
 // Config returns the current configuration.
 func (e *Engine) Config() config.Config { return *e.cfg.Load() }
+
+// RecordUsage feeds one cpa usage record into the passive monitor.
+func (e *Engine) RecordUsage(model, alias, served string, failed bool) {
+	if e.Config().Monitor.Enabled {
+		e.Monitor.Record(model, alias, served, failed)
+	}
+}
 
 // Claims reports whether the router should send model to this plugin's
 // executor, with a reason for logs.

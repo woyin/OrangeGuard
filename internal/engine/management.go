@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/woyin/orangeguard/internal/config"
 	"github.com/woyin/orangeguard/internal/cooldown"
+	"github.com/woyin/orangeguard/internal/monitor"
 )
 
 // Management API paths, registered under /v0/management and protected by the
@@ -13,6 +16,8 @@ import (
 const (
 	StatusPath = "/plugins/orangeguard/status"
 	ResetPath  = "/plugins/orangeguard/cooldown/reset"
+	// MonitorResetPath clears the served-model monitor statistics.
+	MonitorResetPath = "/plugins/orangeguard/monitor/reset"
 )
 
 // VirtualStatus summarises one virtual model and the live state of its members.
@@ -37,6 +42,11 @@ type StatusReport struct {
 	GuardedModels []string          `json:"guarded_models"`
 	VirtualModels []VirtualStatus   `json:"virtual_models"`
 	Cooldowns     []cooldown.Status `json:"cooldowns"`
+	// Config is the effective configuration, defaults included, so the
+	// management page can edit it without re-implementing the defaults.
+	Config       config.Config  `json:"config"`
+	Monitor      []monitor.Stat `json:"monitor"`
+	MonitorSince time.Time      `json:"monitor_since"`
 }
 
 // Status builds a live report of configuration and cooldown state.
@@ -47,7 +57,15 @@ func (e *Engine) Status() StatusReport {
 	for _, st := range snapshot {
 		byModel[strings.ToLower(st.Model)] = st
 	}
-	report := StatusReport{Enabled: cfg.Enabled, Cooldowns: snapshot, GuardedModels: []string{}, VirtualModels: []VirtualStatus{}}
+	report := StatusReport{
+		Enabled:       cfg.Enabled,
+		Cooldowns:     snapshot,
+		GuardedModels: []string{},
+		VirtualModels: []VirtualStatus{},
+		Config:        cfg,
+		Monitor:       e.Monitor.Snapshot(),
+		MonitorSince:  e.Monitor.Since(),
+	}
 	for _, rule := range cfg.Guard.Models {
 		report.GuardedModels = append(report.GuardedModels, rule.Model)
 	}
@@ -91,6 +109,9 @@ func (e *Engine) HandleManagement(method, path string, query map[string][]string
 		}
 		cleared := e.Cooldown.Reset(req.Model)
 		return jsonBody(http.StatusOK, map[string]any{"cleared": cleared, "model": req.Model})
+	case strings.HasSuffix(path, MonitorResetPath) && method == http.MethodPost:
+		e.Monitor.Reset()
+		return jsonBody(http.StatusOK, map[string]any{"reset": true})
 	default:
 		return jsonBody(http.StatusNotFound, map[string]string{"error": "unknown orangeguard management route"})
 	}

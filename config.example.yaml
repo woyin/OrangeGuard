@@ -21,6 +21,9 @@ plugins:
         max_retries: 2          # extra same-model attempts after a substitution
         retry_delay_ms: 200     # pause between those attempts
         on_missing_model: accept  # accept | reject responses that name no model
+        # Without a models list the OpenAI families are protected by default
+        # (gpt-*, chatgpt-*, o1*, o3*, o4*). A list replaces the defaults;
+        # "models: []" protects nothing.
         models:
           # Simplest form: the response must report gpt-6-astra (snapshot
           # suffixes like gpt-6-astra-2026-08-01 are fine; gpt-5.5-mini or
@@ -36,6 +39,11 @@ plugins:
           # Globs work too: guard every Claude Opus model.
           - model: "claude-opus-*"
             deny: ["*haiku*", "*sonnet*"]
+
+      # Passive served-model monitor fed by cpa usage records: records which
+      # model actually answered each request, never intercepts or delays.
+      monitor:
+        enabled: true
 
       # ------------------------------------------------------------------
       # Cooldown: how long a failing upstream model is skipped by virtual
