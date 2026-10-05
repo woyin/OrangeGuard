@@ -132,13 +132,27 @@ log "container: $container ($image, linux/$arch)"
 log "config:    $config_file"
 log "plugins:   $plugins_dir"
 
-# Existing key-billing libraries. The plugin ID is the file name, so anything
-# other than cpa-key-billing.so would need a matching config key; refuse it.
-mapfile -t existing_kb < <(find "$plugins_dir" -name 'cpa-key-billing*.so' -type f | sort)
-for lib in "${existing_kb[@]}"; do
-  [[ "$(basename "$lib")" == "cpa-key-billing.so" ]] ||
-    die "unexpected key-billing library name: $lib (expected cpa-key-billing.so); move it manually"
-done
+# plugin_id <file>: the plugin ID cpa derives from a library file name. The
+# plugin store installs versioned files such as cpa-key-billing-v1.3.18.so,
+# which cpa reads as ID cpa-key-billing, version 1.3.18.
+plugin_id() {
+  local name
+  name="$(basename "$1" .so)"
+  if [[ "$name" =~ ^(.+)-v([0-9][0-9A-Za-z.+-]*)$ ]]; then
+    echo "${BASH_REMATCH[1]}"
+  else
+    echo "$name"
+  fi
+}
+
+# Existing key-billing libraries, plain or store-versioned. They are replaced
+# in place under their current names: cpa prefers versioned files and the
+# plugin store may pin plugins.configs.cpa-key-billing.store.version, so a new
+# file with a different name could be ignored or deleted by cpa.
+existing_kb=()
+while IFS= read -r lib; do
+  [[ "$(plugin_id "$lib")" == "cpa-key-billing" ]] && existing_kb+=("$lib")
+done < <(find "$plugins_dir" -name 'cpa-key-billing*.so' -type f | sort)
 
 [[ -n "$config_file" && -f "$config_file" ]] || die "config.yaml mount not found for $container"
 grep -qE '^plugins:' "$config_file" || die "$config_file has no plugins: section"
@@ -176,15 +190,20 @@ if [[ "$mode" == "rollback" ]]; then
 fi
 
 if (( ${#existing_kb[@]} == 0 )); then
-  log "no existing cpa-key-billing.so found; installing fresh"
+  log "no existing key-billing library found; installing fresh"
   target_dir="$plugins_dir/linux/$arch"
+  kb_targets=("$target_dir/cpa-key-billing.so")
 else
-  # Highest-priority location the host would load from wins; install there.
-  target_dir="$(dirname "${existing_kb[-1]}")"
+  # orangeguard goes next to the key-billing library cpa loads.
+  target_dir="$(dirname "${existing_kb[0]}")"
   for lib in "${existing_kb[@]}"; do
     [[ "$(dirname "$lib")" == "$plugins_dir/linux/$arch" ]] && target_dir="$plugins_dir/linux/$arch"
   done
-  log "existing key-billing: ${existing_kb[*]}"
+  kb_targets=("${existing_kb[@]}")
+  log "existing key-billing (replaced in place): ${existing_kb[*]}"
+  if grep -qE '^[[:space:]]+(version|release-tag):' "$config_file"; then
+    log "note: the plugin store pins a key-billing version in config.yaml; the file name is kept so the pin still matches"
+  fi
 fi
 log "install target: $target_dir"
 
@@ -264,10 +283,9 @@ install_lib() { # built-file destination
   echo "  installed $2"
 }
 install_lib "$work/orangeguard.so" "$target_dir/orangeguard.so"
-install_lib "$work/cpa-key-billing.so" "$target_dir/cpa-key-billing.so"
-# Replace copies elsewhere too, so no location can still load the original.
-for lib in "${existing_kb[@]}"; do
-  [[ "$lib" == "$target_dir/cpa-key-billing.so" ]] || install_lib "$work/cpa-key-billing.so" "$lib"
+# Every copy is replaced, so no location can still load the original.
+for lib in "${kb_targets[@]}"; do
+  install_lib "$work/cpa-key-billing.so" "$lib"
 done
 cp "$work/revisions" "$backup/revisions"
 log "backup: $backup"
@@ -316,5 +334,7 @@ Next steps:
   * key-billing now admits unpriced models at \$0 (unpriced_models: allow) and
     refreshes models.dev prices daily; set unpriced_models: block to keep the
     old refusal.
+  * Do not click "update" for cpa-key-billing in the CPA plugin store: it would
+    replace the fork with the original release. Re-run this script instead.
   * Roll back with:  sudo bash $0 --rollback $backup
 EOF

@@ -64,9 +64,10 @@ sudo bash install-cpa-plugins.sh --rollback /opt/cpa/backups/plugins-<时间>   
 
 - 通过挂载找到 `$CPA_DIR` 对应的容器、`config.yaml` 和插件目录。
 - 在 `golang:1.26-bookworm` 里编译，与官方镜像（Debian bookworm，glibc 2.36）及宿主机 CPU 架构一致；在更新的系统上直接编译的 `.so` 可能因 glibc 版本过高而无法加载。
-- 停止容器 → 备份 `config.yaml`、被替换的插件和计费数据库 → 原地替换已有的 `cpa-key-billing.so`（插件 ID 和数据库不变，原有 Key、计划、价格、用量都保留）→ 必要时在 `plugins.configs` 中加入 `orangeguard: {enabled: true}` → 启动容器。
+- 停止容器 → 备份 `config.yaml`、被替换的插件和计费数据库 → **按原文件名原地替换**已有的 key-billing（包括插件商店安装的 `cpa-key-billing-v1.3.18.so` 这类带版本号的文件：cpa 优先加载带版本号的文件，商店还可能在配置里锁定版本，所以不能另起新文件名；插件 ID 和数据库不变，原有 Key、计划、价格、用量都保留）→ 必要时在 `plugins.configs` 中加入 `orangeguard: {enabled: true}` → 启动容器。
 - 从 cpa 日志确认两个插件都已注册，失败则自动回滚。只用 `docker stop/start`，不会触发 compose 的 `pull_policy: always` 拉取新镜像。
 - 回滚会把 `config.yaml` 恢复到安装前的版本，之后对 orangeguard 规则的修改需要重新加上。
+- 安装后**不要在 cpa 插件商店里点 key-billing 的"更新"**，那会换回原版；更新请重新运行本脚本。
 
 已在 cpa v8.0.15 官方镜像上完整演练：安装、热加载 orangeguard 规则、防降级、虚拟模型切换与计费、回滚。
 
