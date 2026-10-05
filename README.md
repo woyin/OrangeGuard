@@ -53,7 +53,7 @@ make install    # 复制到 ~/.cli-proxy-api/plugins/<goos>/<goarch>/（用 INST
 
 ### Docker 部署脚本
 
-[`deploy/install-cpa-plugins.sh`](deploy/install-cpa-plugins.sh) 用于官方 Docker 镜像部署的 cpa，一次安装或更新 orangeguard 和 [key-billing fork](https://github.com/woyin/cpa-plugin-key-billing)：
+[`deploy/install-cpa-plugins.sh`](deploy/install-cpa-plugins.sh) 用于官方 Docker 镜像部署的 cpa，安装或更新 orangeguard。已安装的 key-billing **默认不动**。
 
 ```bash
 curl -fsSLO https://raw.githubusercontent.com/woyin/OrangeGuard/main/deploy/install-cpa-plugins.sh
@@ -62,14 +62,16 @@ sudo CPA_DIR=/opt/cpa bash install-cpa-plugins.sh             # 安装 / 更新
 sudo bash install-cpa-plugins.sh --rollback /opt/cpa/backups/plugins-<时间>   # 回滚
 ```
 
+`raw.githubusercontent.com` 会缓存几分钟；刚更新后若拿到旧版，把 URL 里的 `main` 换成提交号。
+
 - 通过挂载找到 `$CPA_DIR` 对应的容器、`config.yaml` 和插件目录。
 - 在 `golang:1.26-bookworm` 里编译，与官方镜像（Debian bookworm，glibc 2.36）及宿主机 CPU 架构一致；在更新的系统上直接编译的 `.so` 可能因 glibc 版本过高而无法加载。
-- 停止容器 → 备份 `config.yaml`、被替换的插件和计费数据库 → **按原文件名原地替换**已有的 key-billing（包括插件商店安装的 `cpa-key-billing-v1.3.18.so` 这类带版本号的文件：cpa 优先加载带版本号的文件，商店还可能在配置里锁定版本，所以不能另起新文件名；插件 ID 和数据库不变，原有 Key、计划、价格、用量都保留）→ 必要时在 `plugins.configs` 中加入 `orangeguard: {enabled: true}` → 启动容器。
-- 从 cpa 日志确认两个插件都已注册，失败则自动回滚。只用 `docker stop/start`，不会触发 compose 的 `pull_policy: always` 拉取新镜像。
+- 停止容器 → 备份 `config.yaml` 和被替换的插件 → 安装（已有的 orangeguard **按原文件名原地替换**：cpa 优先加载 `name-v1.2.3.so` 这类带版本号的文件，插件商店还可能在配置里锁定版本）→ 必要时在 `plugins.configs` 中加入 `orangeguard: {enabled: true}` → 启动容器。
+- 从 cpa 日志确认插件已注册（原本装了 key-billing 的，也确认它重新加载成功），失败则自动回滚。只用 `docker stop/start`，不会触发 compose 的 `pull_policy: always` 拉取新镜像。
 - 回滚会把 `config.yaml` 恢复到安装前的版本，之后对 orangeguard 规则的修改需要重新加上。
-- 安装后**不要在 cpa 插件商店里点 key-billing 的"更新"**，那会换回原版；更新请重新运行本脚本。
+- `--with-key-billing`：同时把已安装的 key-billing 原地替换为 [woyin fork](https://github.com/woyin/cpa-plugin-key-billing)（会备份计费数据库；之后不要在插件商店里点它的"更新"）。
 
-已在 cpa v8.0.15 官方镜像上完整演练：安装、热加载 orangeguard 规则、防降级、虚拟模型切换与计费、回滚。
+已在 cpa v8.0.15 官方镜像上完整演练：插件商店安装的原版 key-billing（带版本号文件名与版本锁定）+ 只装 orangeguard、热加载规则、防降级、虚拟模型切换与计费、原地升级、回滚。
 
 ## 配置
 
@@ -212,37 +214,22 @@ curl -X POST -H "Authorization: Bearer <management-key>" \
 
 ## 与 key-billing 配合使用
 
-计费用 [woyin/cpa-plugin-key-billing](https://github.com/woyin/cpa-plugin-key-billing)（[haowang02/cpa-plugin-key-billing](https://github.com/haowang02/cpa-plugin-key-billing) 的 fork，默认放行未定价模型，并自动刷新 models.dev 参考价）。两个插件**分别编译、分别安装**，放进同一个插件目录即可：
+可以和原版 [haowang02/cpa-plugin-key-billing](https://github.com/haowang02/cpa-plugin-key-billing)（包括插件商店安装的）一起用，两个插件**分别安装**，不要合并成一个：cpa 在插件发起的嵌套调用中会跳过**发起方插件自己的**拦截器。两者分开时，key-billing 对用户请求做额度、并发、模型权限检查，对 orangeguard 请求的每个成员再检查一次定价。
 
-```text
-plugins/<goos>/<goarch>/orangeguard.so
-plugins/<goos>/<goarch>/cpa-key-billing.so
-```
+**原版 key-billing 拒绝没有价格的模型，包括虚拟模型名。** 需要在它的管理页面里：
 
-```yaml
-plugins:
-  enabled: true
-  dir: "plugins"
-  configs:
-    orangeguard:
-      enabled: true
-      priority: 50
-      # ... guard / cooldown / virtual_models，见上文
-    cpa-key-billing:
-      enabled: true
-      state_file: "plugins/cpa-key-billing-state-v1.db"
-      unpriced_models: allow             # 虚拟模型本身没有价格，必须放行
-      reference_price_refresh_hours: 24
-      sync_custom_prices_from_reference: true
-```
+1. 给每个虚拟模型名（如 `smart`）设一个自定义价格，**设 0 即可**。实际费用按处理请求的成员模型计算，不会为虚拟模型名单独记账。
+2. 给每个成员模型定价（自定义价或 models.dev 参考价）。没有价格的成员会被 key-billing 拒绝；orangeguard 把这种拒绝当作"模型不可用"，冷却 1 小时并切到下一个成员。
+3. 给 API Key 绑定了模型白名单的，把虚拟模型名加进白名单。成员模型不需要加：嵌套调用只检查定价。
 
-不要把两个插件合并成一个：cpa 在插件发起的嵌套调用中会跳过**发起方插件自己的**拦截器。两者分开时，key-billing 能对 OrangeGuard 请求的每个成员模型正常做额度、模型权限和凭证路由检查；合并后这些检查会被跳过。
+计费行为（cpa v8.0.15 实测）：
 
-计费行为（cpa v7.3.17 实测，两个插件同时加载）：
-
-- 请求虚拟模型（如 `smart`）会被放行，按**实际处理请求的成员模型**的价格记账，不会为虚拟模型名单独记一笔，也不会重复计费。虚拟模型名本身不需要定价。
+- 请求虚拟模型按**实际处理请求的成员模型**的价格记账，不会重复计费。
 - **重试和切换产生的每一次上游调用都会计费**，包括被 Guard 判定为降级而丢弃的那次、以及切换前失败的成员。cpa 会把每次上游调用都交给计费插件，插件无法区分。受保护模型的 `max_retries` 越大，被降级时用户付出的越多。
 - 被降级的那次调用按**请求的模型**（如 `gpt-6-astra`）计价，而不是实际返回的降级模型。
+- 用户自己的额度、并发限制只在外层请求检查一次，不会因为某个用户额度用完而让成员模型对所有人进入冷却。
+
+[woyin fork](https://github.com/woyin/cpa-plugin-key-billing) 额外提供：未定价模型按 0 元放行（`unpriced_models: allow`，虚拟模型名不必定价）、定时刷新 models.dev 参考价、复制自参考价的自定义价随之更新。需要时用部署脚本的 `--with-key-billing` 安装。
 
 ## 已知局限
 
