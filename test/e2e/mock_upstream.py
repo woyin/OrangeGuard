@@ -1,7 +1,7 @@
 # Mock OpenAI-compatible upstream for the orangeguard end-to-end test.
 # gpt-6-astra is always downgraded to gpt-5.5-mini, flaky is downgraded on its
 # first call only, quota-model always answers 429 insufficient_quota.
-import json, sys, threading
+import json, sys, threading, time
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 counts = {}
 lock = threading.Lock()
@@ -22,6 +22,8 @@ class H(BaseHTTPRequestHandler):
         with lock:
             counts[model] = counts.get(model, 0) + 1; n = counts[model]
         sys.stderr.write(f"UPSTREAM {model} #{n} stream={body.get('stream')}\n"); sys.stderr.flush()
+        if model == "cancel-leaf":
+            time.sleep(2)
         if model == "quota-model":
             return self._json(429, {"error": {"type": "insufficient_quota", "code": "insufficient_quota", "message": "You exceeded your current quota, please check your plan and billing details."}})
         served = served_for(model, n)

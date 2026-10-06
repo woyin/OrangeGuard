@@ -46,6 +46,8 @@ openai-compatibility:
       - name: "flaky"
       - name: "quota-model"
       - name: "good-model"
+      - name: "cancel-leaf"
+      - name: "cancel-sibling"
 plugins:
   enabled: true
   dir: "$WORK/plugins"
@@ -59,6 +61,10 @@ plugins:
           - model: "gpt-6-astra"
           - model: "flaky"
       virtual_models:
+        - name: "cancel-parent"
+          members: [{model: "cancel-child"}, {model: "cancel-sibling"}]
+        - name: "cancel-child"
+          members: [{model: "cancel-leaf"}, {model: "cancel-sibling"}]
         - name: "nested"
           strategy: manual
           manual_member: "smart"
@@ -142,6 +148,15 @@ check "nested gemini stream" 'hello from good-model' \
   "$(curl -s "http://127.0.0.1:$CPA_PORT/v1beta/models/nested:streamGenerateContent?alt=sse&key=test-key" -H 'Content-Type: application/json' -d '{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}')"
 check "nested anthropic stream" 'hello from good-model' \
   "$(curl -s "http://127.0.0.1:$CPA_PORT/v1/messages" -H 'x-api-key: test-key' -H 'anthropic-version: 2023-06-01' -H 'Content-Type: application/json' -d '{"model":"nested","max_tokens":50,"stream":true,"messages":[{"role":"user","content":"hi"}]}')"
+# Real client disconnect through the unchanged CPA callback serialization.
+for STREAM_CANCEL in false true; do
+  curl -s --max-time 0.3 "http://127.0.0.1:$CPA_PORT/v1/chat/completions" \
+    -H 'Authorization: Bearer test-key' -H 'Content-Type: application/json' \
+    -d "{\"model\":\"cancel-parent\",\"stream\":$STREAM_CANCEL,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}" >/dev/null || true
+  sleep 3
+ done
+if grep -q 'UPSTREAM cancel-sibling' "$WORK/upstream.log"; then echo 'FAIL  cancellation called sibling'; FAILED=1; else echo 'PASS  real client cancellation never calls sibling'; fi
+check 'real cancellation reaches upstream' 'UPSTREAM cancel-leaf' "$(cat "$WORK/upstream.log")"
 echo "--- upstream calls"; cat "$WORK/upstream.log"
 if [ "$FAILED" -ne 0 ]; then echo "--- cpa log (orangeguard)"; grep -i orangeguard "$WORK/cpa.log" || true; exit 1; fi
 echo "all e2e checks passed"

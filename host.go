@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginabi"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
@@ -102,6 +104,17 @@ func (cpaHost) Log(callbackID, level, message string) {
 func upstreamError(err error) error {
 	var hostErr *hostCallError
 	if errors.As(err, &hostErr) {
+		// The callback boundary serializes errors, losing their Go identity.
+		// Recognize only exact context sentinel messages (not substring matches
+		// in arbitrary upstream bodies), and retain the wrapper as evidence.
+		if hostErr.HTTPStatus == 0 || hostErr.HTTPStatus == 499 {
+			switch strings.TrimSpace(hostErr.Message) {
+			case context.Canceled.Error():
+				return fmtContextError{cause: context.Canceled, original: err}
+			case context.DeadlineExceeded.Error():
+				return fmtContextError{cause: context.DeadlineExceeded, original: err}
+			}
+		}
 		code := hostErr.Code
 		if code == "host_call_failed" {
 			code = "" // generic wrapper code; the engine picks a meaningful one
@@ -110,6 +123,14 @@ func upstreamError(err error) error {
 	}
 	return err
 }
+
+type fmtContextError struct {
+	cause    error
+	original error
+}
+
+func (e fmtContextError) Error() string   { return e.original.Error() }
+func (e fmtContextError) Unwrap() []error { return []error{e.cause, e.original} }
 
 func newBypassToken() string {
 	buf := make([]byte, 8)

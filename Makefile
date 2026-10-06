@@ -1,5 +1,5 @@
 PLUGIN_NAME := orangeguard
-VERSION ?= 0.7.0
+VERSION ?= 0.7.1
 GOOS ?= $(shell go env GOOS)
 GOARCH ?= $(shell go env GOARCH)
 

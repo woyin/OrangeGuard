@@ -171,6 +171,11 @@ func callHost(method string, payload any) (json.RawMessage, error) {
 		return nil, fmt.Errorf("host callback %s returned no response, code=%d", method, int(callCode))
 	}
 
+	return decodeHostResponse(method, rawResponse, int(callCode))
+}
+
+// decodeHostResponse is shared by the actual ABI callback and boundary tests.
+func decodeHostResponse(method string, rawResponse []byte, callCode int) ([]byte, error) {
 	var env pluginabi.Envelope
 	if errUnmarshal := json.Unmarshal(rawResponse, &env); errUnmarshal != nil {
 		return nil, fmt.Errorf("decode host envelope %s: %w", method, errUnmarshal)

@@ -381,6 +381,7 @@ func (e *Engine) Execute(req Request) (Response, *Failure) {
 			}
 			if errExec != nil {
 				if errors.Is(errExec, context.Canceled) || errors.Is(errExec, context.DeadlineExceeded) {
+					e.logf(req.CallbackID, "info", "request cancelled | requested=%s group_path=%s leaf=%s transport=non-stream", req.execution.root, strings.Join(req.groupPath, " -> "), t.model)
 					return Response{}, &Failure{Status: 499, Code: "request_cancelled", Message: errExec.Error()}
 				}
 				f, kind := e.recordError(req, cfg, t.model, errExec, attempts)
@@ -529,6 +530,7 @@ func (e *Engine) ExecuteStream(req Request, sink Sink) error {
 				continue
 			case streamFailed:
 				if errors.Is(errAttempt, context.Canceled) || errors.Is(errAttempt, context.DeadlineExceeded) {
+					e.logf(req.CallbackID, "info", "request cancelled | requested=%s group_path=%s leaf=%s transport=stream", req.execution.root, strings.Join(req.groupPath, " -> "), t.model)
 					return &Failure{Status: 499, Code: "request_cancelled", Message: errAttempt.Error()}
 				}
 				f, kind := e.recordError(req, cfg, t.model, errAttempt, attempts)
