@@ -113,6 +113,8 @@ details summary { cursor: pointer; color: var(--muted); margin: 12px 0 6px; }
   <div class="spacer"></div>
   <span class="status-line" id="status-line"></span>
   <button class="btn small" id="refresh">刷新</button>
+  <button class="btn small" id="catalog-refresh">刷新能力目录</button>
+  <span class="hint" id="catalog-status"></span>
 </header>
 <div id="toasts" aria-live="polite"></div>
 <main id="main">
@@ -456,6 +458,25 @@ function readModelCapabilities(m) {
   if (caps.input_modalities) caps.vision = caps.input_modalities.some((mo) => lower(mo) === "image");
   return caps;
 }
+async function selectReferenceCapabilities(id) {
+  const result = await api("GET", API + "/plugins/orangeguard/models?model=" + encodeURIComponent(id));
+  if (!result.candidates.length) { toast("models.dev 没有精确型号记录：" + id, "warn"); return false; }
+  const options = result.candidates.map((c, i) => (i + 1) + ". " + c.provider + " / " + c.model_id + " — 上下文 " + (c.capabilities.context_length || "未知") + "，输出 " + (c.capabilities.max_output_tokens || "未知"));
+  const selected = prompt("选择参考提供商（并非渠道实测保证）。来源：models.dev，快照 " + result.snapshot_date + "\n" + options.join("\n") + "\n输入序号；取消则不修改。", "");
+  if (selected === null || !/^[1-9][0-9]*$/.test(selected.trim())) return false;
+  const c = result.candidates[Number(selected) - 1];
+  if (!c) return false;
+  const info = state.modelInfo.get(lower(id));
+  if (!info) return false;
+  // CPA-reported fields override reference fields. No global provider guess.
+  if (!info.reportedCapabilities) info.reportedCapabilities = clone(info.capabilities || {});
+  info.capabilities = { ...clone(c.capabilities), ...info.reportedCapabilities };
+  info.context = info.capabilities.context_length || info.capabilities.input_token_limit || 0;
+  info.output = info.capabilities.max_output_tokens || 0;
+  info.inputModalities = info.capabilities.input_modalities || [];
+  info.reference = "models.dev / " + c.provider + " / " + c.model_id;
+  return true;
+}
 function copyModelCapabilities(vm, id) {
   const caps = state.modelInfo.get(lower(id))?.capabilities;
   if (!caps || !Object.keys(caps).length) return "CPA 未提供该模型的能力信息，未修改组合配置。";
@@ -534,7 +555,8 @@ function renderEditor(view) {
         h("label", { class: "check", title: "检测到降级后，在该成员上额外重试的次数" }, "重试", h("input", { type: "number", min: "0", value: m.max_retries || 0, oninput: (e) => { m.max_retries = Math.max(0, parseInt(e.target.value) || 0); } }))),
       h("div", { class: "ctl" }, cooldownChip(m.model), cooldownOf(m.model) ? h("button", { class: "btn small", onclick: () => resetCooldown(m.model) }, "解除") : null),
       h("div", { class: "ctl" },
-        h("button", { class: "btn small", title: "将此模型已上报的能力复制到组合；不修改名称或调度策略", onclick: () => { const message = copyModelCapabilities(vm, m.model); rerender(); toast(message, "warn"); } }, "复制能力"),
+        h("button", { class: "btn small", title: "将此模型已上报的能力复制到组合；不修改名称或调度策略", onclick: async () => { try { const message = copyModelCapabilities(vm, m.model); rerender(); toast(message, "warn"); } catch (e) { toast(e.message, true); } } }, "复制能力"),
+        h("button", { class: "btn small", title: "选择 models.dev 参考提供商后复制能力，不更改模型路由", onclick: async () => { try { if (await selectReferenceCapabilities(m.model)) { const message = copyModelCapabilities(vm, m.model); rerender(); toast("参考资料已选择：" + state.modelInfo.get(lower(m.model)).reference + "。" + message, "warn"); } } catch (e) { toast(e.message, true); } } }, "参考能力"),
         h("button", { class: "btn small", title: "上移", disabled: i === 0, onclick: () => { [vm.members[i - 1], vm.members[i]] = [vm.members[i], vm.members[i - 1]]; rerender(); } }, "↑"),
         h("button", { class: "btn small", title: "下移", disabled: i === vm.members.length - 1, onclick: () => { [vm.members[i + 1], vm.members[i]] = [vm.members[i], vm.members[i + 1]]; rerender(); } }, "↓"),
         h("button", { class: "btn small danger", title: "移除", onclick: () => { vm.members.splice(i, 1); rerender(); } }, "✕")));
@@ -567,7 +589,7 @@ function renderEditor(view) {
     h("div", { class: "preview" }, attemptPreview(vm)),
     h("h3", {}, "对外声明的能力"),
     h("p", { class: "hint" }, "客户端和 Agent 只看到组合模型名，靠这里的能力判断上下文长度、是否多模态。建议取所有成员的最小公共能力。同型号多渠道组合可点击成员旁的“复制能力”，按该模型已上报的信息一键填写；未知字段不会猜测，复制后需保存。"),
-    h("div", { class: "row" }, h("button", { class: "btn", disabled: !vm.members.length, onclick: () => { const notes = deriveCapabilities(vm); rerender(); if (notes.length) toast(notes.join(" "), "warn"); else toast("已按成员的最小公共能力填写"); } }, "从成员推导"), notesBox),
+    h("div", { class: "row" }, h("button", { class: "btn", disabled: !vm.members.length, onclick: async () => { try { for (const m of vm.members) { const info = state.modelInfo.get(lower(m.model)); if (info && !info.context && !await selectReferenceCapabilities(m.model)) return; } const notes = deriveCapabilities(vm); rerender(); if (notes.length) toast(notes.join(" "), "warn"); else toast("已按成员的最小公共能力填写；如使用参考资料，请确认渠道限制后保存"); } catch (e) { toast(e.message, true); } } }, "从成员推导"), notesBox),
     h("div", { class: "grid", style: "margin-top:10px" },
       h("label", { class: "field" }, h("span", {}, "上下文长度（token）"), num("context_length", "例如 200000")),
       h("label", { class: "field" }, h("span", {}, "最大输出（token）"), num("max_output_tokens", "例如 32000")),
@@ -761,7 +783,18 @@ $("tabs").addEventListener("click", (e) => {
   history.replaceState(null, "", "#" + tab);
   render();
 });
-$("refresh").addEventListener("click", async () => { try { await loadStatus(); await loadModels(); render(); toast("已刷新"); } catch (e) { toast(e.message, true); } });
+async function showCatalogStatus() {
+  const s = await api("GET", API + "/plugins/orangeguard/catalog");
+  $("catalog-status").textContent = "models.dev：" + s.snapshot_date + " · 每 " + s.interval_hours + "h 更新" + (s.last_error ? " · 刷新失败，使用缓存" : "") + (s.cache_error ? " · 缓存写入失败" : "");
+  $("catalog-status").title = JSON.stringify(s, null, 2);
+}
+$("catalog-refresh").addEventListener("click", async () => {
+  const button = $("catalog-refresh"); button.disabled = true;
+  try { await api("POST", API + "/plugins/orangeguard/catalog", {}); await showCatalogStatus(); toast("能力目录已更新；已保存的 combo 未修改。重新选择参考能力可使用新资料。"); }
+  catch (e) { toast(e.message, true); try { await showCatalogStatus(); } catch (_) {} }
+  finally { button.disabled = false; }
+});
+$("refresh").addEventListener("click", async () => { try { await loadStatus(); await loadModels(); await showCatalogStatus(); render(); toast("已刷新"); } catch (e) { toast(e.message, true); } });
 $("login-btn").addEventListener("click", () => {
   const key = $("login-key").value.trim();
   if (!key) return;

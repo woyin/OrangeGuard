@@ -9,6 +9,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginabi"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 
+	"github.com/woyin/orangeguard/internal/catalog"
 	"github.com/woyin/orangeguard/internal/config"
 	"github.com/woyin/orangeguard/internal/engine"
 	"github.com/woyin/orangeguard/internal/ui"
@@ -107,6 +108,9 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 	case pluginabi.MethodManagementRegister:
 		return okEnvelope(map[string]any{
 			"routes": []managementRoute{
+				{Method: http.MethodGet, Path: engine.CatalogPath, Description: "Catalog refresh status"},
+				{Method: http.MethodPost, Path: engine.CatalogPath, Description: "Refresh models.dev catalog (does not modify saved combos)"},
+				{Method: http.MethodGet, Path: engine.ModelsPath, Description: "models.dev reference capabilities: query model, explicit provider confirmation required"},
 				{Method: http.MethodGet, Path: engine.StatusPath, Description: "orangeguard configuration, monitor, guard/virtual-model and cooldown status"},
 				{Method: http.MethodPost, Path: engine.ResetPath, Description: "Clear cooldowns: body {\"model\":\"name\"} or empty for all"},
 				{Method: http.MethodPost, Path: engine.MonitorResetPath, Description: "Clear served-model monitor statistics"},
@@ -136,6 +140,7 @@ func configure(raw []byte) error {
 		return errParse
 	}
 	eng.SetConfig(cfg)
+	catalog.Start()
 	for _, warning := range warnings {
 		cpaHost{}.Log("", "warn", "orangeguard: config: "+warning)
 	}

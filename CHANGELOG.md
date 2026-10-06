@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.0
+
+- Add a models.dev reference capability directory and authenticated model-detail endpoint, preserving full request names and requiring explicit provider selection.
+- Add per-member reference capability selection and use confirmed reference data when deriving combo capabilities. CPA-reported fields take precedence; refreshing references does not change saved combos.
+- Refresh the directory asynchronously on plugin configuration and every 24 hours, with a manual management-page refresh button and refresh status endpoint.
+- Persist valid data atomically to `plugins/orangeguard-models-cache.json` (override with `ORANGEGUARD_CATALOG_CACHE`). Retain last valid data on network/payload failure; embedded data is an initial fallback only.
+- Bound network refreshes to 45 seconds and 32 MiB, reject unusable catalogs, and report network/cache-write failures.
+- Add directory lookup, management endpoint, persistence and failed-refresh regression tests.
+
+Automatic refresh interval is currently fixed at 24 hours. This release does not patch CPA's original provider model lists or change their routing. Browser and live CPA end-to-end verification remain outstanding.
+
 ## 0.5.0
 
 - Attribute monitoring statistics to the complete client request name supplied by CPA (`Alias`), falling back to the executed model only when no alias is supplied. Keep different routing namespaces separate.

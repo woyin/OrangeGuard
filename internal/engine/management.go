@@ -1,11 +1,13 @@
 package engine
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/woyin/orangeguard/internal/catalog"
 	"github.com/woyin/orangeguard/internal/config"
 	"github.com/woyin/orangeguard/internal/cooldown"
 	"github.com/woyin/orangeguard/internal/monitor"
@@ -14,8 +16,10 @@ import (
 // Management API paths, registered under /v0/management and protected by the
 // cpa management key.
 const (
-	StatusPath = "/plugins/orangeguard/status"
-	ResetPath  = "/plugins/orangeguard/cooldown/reset"
+	CatalogPath = "/plugins/orangeguard/catalog"
+	ModelsPath  = "/plugins/orangeguard/models"
+	StatusPath  = "/plugins/orangeguard/status"
+	ResetPath   = "/plugins/orangeguard/cooldown/reset"
 	// MonitorResetPath clears the served-model monitor statistics.
 	MonitorResetPath = "/plugins/orangeguard/monitor/reset"
 )
@@ -93,6 +97,18 @@ func (e *Engine) Status() StatusReport {
 func (e *Engine) HandleManagement(method, path string, query map[string][]string, body []byte) (int, []byte) {
 	path = strings.TrimRight(path, "/")
 	switch {
+	case strings.HasSuffix(path, CatalogPath) && method == http.MethodGet:
+		return jsonBody(http.StatusOK, catalog.Status())
+	case strings.HasSuffix(path, CatalogPath) && method == http.MethodPost:
+		if err := catalog.Refresh(context.Background()); err != nil {
+			return jsonBody(http.StatusBadGateway, map[string]any{"error": err.Error(), "catalog": catalog.Status()})
+		}
+		return jsonBody(http.StatusOK, catalog.Status())
+	case strings.HasSuffix(path, ModelsPath) && method == http.MethodGet:
+		if len(query["model"]) == 0 || strings.TrimSpace(query["model"][0]) == "" {
+			return jsonBody(http.StatusBadRequest, map[string]string{"error": "model query parameter is required"})
+		}
+		return jsonBody(http.StatusOK, catalog.Lookup(query["model"][0]))
 	case strings.HasSuffix(path, StatusPath) && method == http.MethodGet:
 		return jsonBody(http.StatusOK, e.Status())
 	case strings.HasSuffix(path, ResetPath) && method == http.MethodPost:
