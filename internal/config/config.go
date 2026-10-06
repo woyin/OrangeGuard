@@ -11,6 +11,7 @@ import (
 
 // Strategy names accepted for virtual models.
 const (
+	StrategyManual     = "manual"
 	StrategyFallback   = "fallback"
 	StrategyRoundRobin = "round-robin"
 	StrategyRandom     = "random"
@@ -140,9 +141,10 @@ func (c CooldownConfig) UseRetryAfter() bool { return c.HonorRetryAfter == nil |
 
 // VirtualModel merges several upstream models under one client-facing name.
 type VirtualModel struct {
-	Name     string   `yaml:"name" json:"name"`
-	Strategy string   `yaml:"strategy" json:"strategy"`
-	Members  []Member `yaml:"members" json:"members"`
+	Name         string   `yaml:"name" json:"name"`
+	Strategy     string   `yaml:"strategy" json:"strategy"`
+	ManualMember string   `yaml:"manual_member" json:"manual_member,omitempty"`
+	Members      []Member `yaml:"members" json:"members"`
 	// MaxAttempts caps the number of upstream attempts per request. 0 means
 	// every member may be tried once (plus its own guard retries).
 	MaxAttempts int `yaml:"max_attempts" json:"max_attempts"`
@@ -231,7 +233,16 @@ func Parse(raw []byte) (Config, []string, error) {
 			return Config{}, nil, fmt.Errorf("orangeguard: decode config: %w", errDecode)
 		}
 	}
+	if err := validateManual(cfg); err != nil {
+		return Config{}, nil, err
+	}
+	if err := validateGroups(cfg); err != nil {
+		return Config{}, nil, err
+	}
 	warnings := cfg.normalize()
+	if err := validateManual(cfg); err != nil {
+		return Config{}, warnings, err
+	}
 	return cfg, warnings, nil
 }
 
@@ -340,19 +351,7 @@ func (c *Config) normalize() []string {
 		seen[key] = true
 		virtuals = append(virtuals, vm)
 	}
-	// Members are executed through the host with this plugin's router skipped,
-	// so a member naming another virtual model could never be resolved.
-	for i := range virtuals {
-		kept := virtuals[i].Members[:0]
-		for _, m := range virtuals[i].Members {
-			if seen[strings.ToLower(m.Model)] {
-				warn("virtual model %q: member %q is itself a virtual model; nesting is not supported, ignored", virtuals[i].Name, m.Model)
-				continue
-			}
-			kept = append(kept, m)
-		}
-		virtuals[i].Members = kept
-	}
+	// Group references are executed inside the plugin, never through host callbacks.
 	final := virtuals[:0]
 	for _, vm := range virtuals {
 		if len(vm.Members) == 0 {
@@ -419,6 +418,8 @@ func (c Config) RetryBudget(rule GuardRule) int {
 
 func normalizeStrategy(s string) string {
 	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "manual":
+		return StrategyManual
 	case "", "fallback", "failover", "priority", "ordered":
 		return StrategyFallback
 	case "round-robin", "round_robin", "roundrobin", "rr":

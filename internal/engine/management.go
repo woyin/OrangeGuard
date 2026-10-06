@@ -85,6 +85,14 @@ func (e *Engine) Status() StatusReport {
 				ms.RemainingSeconds = st.RemainingSeconds
 				ms.Reason = st.Reason
 			}
+			if _, group := cfg.FindVirtual(m.Model); group {
+				ready, until := e.availability(cfg, m.Model, nil)
+				ms.Available = ready
+				if !ready {
+					ms.Reason = "all eligible descendants unavailable"
+					ms.RemainingSeconds = max(0, int64(time.Until(until).Seconds()))
+				}
+			}
 			vs.Members = append(vs.Members, ms)
 		}
 		report.VirtualModels = append(report.VirtualModels, vs)

@@ -134,7 +134,7 @@ const API = "/v0/management";
 const STATUS = API + "/plugins/orangeguard/status";
 const CONFIG = API + "/plugins/orangeguard/config";
 const MODALITIES = ["text", "image", "audio", "video", "pdf"];
-const STRATEGIES = [["fallback", "按顺序回退"], ["round-robin", "轮询"], ["random", "随机"], ["weighted", "加权"]];
+const STRATEGIES = [["fallback", "按顺序回退"], ["round-robin", "按请求轮流"], ["manual", "手动"], ["random", "随机"], ["weighted", "加权"]];
 const REASONS = { quota: "额度用尽", rate_limit: "限流", auth: "鉴权失败", not_found: "模型不可用", server_error: "上游错误", model_mismatch: "被降级" };
 
 const state = { key: "", status: null, models: [], modelInfo: new Map(), modelsError: "", tab: "virtual", editing: null, filter: "", onlyMismatch: false };
@@ -332,12 +332,14 @@ function compact(cfg) {
 async function save(cfg, message) {
   const body = prune(compact(cfg));
   await api("PATCH", CONFIG, body);
-  const want = JSON.stringify((cfg.virtual_models || []).map((v) => v.name)) + JSON.stringify((cfg.guard.models || []).map((r) => r.model));
+  const canonical = (v) => Array.isArray(v) ? v.map(canonical) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canonical(v[k])])) : v;
+  const signature = (c) => JSON.stringify(canonical(prune(compact(c))));
+  const want = signature(cfg);
   for (let i = 0; i < 24; i++) {
     await new Promise((r) => setTimeout(r, 500));
     await loadStatus();
     const c = state.status.config;
-    const got = JSON.stringify((c.virtual_models || []).map((v) => v.name)) + JSON.stringify((c.guard.models || []).map((r) => r.model));
+    const got = signature(c);
     if (got === want) { toast(message || "已保存，配置已生效"); render(); return true; }
   }
   toast("已写入 config.yaml，但插件尚未加载新配置；请检查 cpa 日志中的 orangeguard: config 警告", true);
@@ -376,7 +378,7 @@ function modelPicker({ placeholder, exclude, onPick }) {
   let active = 0, items = [];
   const draw = () => {
     const q = lower(input.value);
-    items = realModels().filter((m) => !exclude().has(lower(m.id)) && (!q || lower(m.id).includes(q) || lower(m.owner).includes(q))).slice(0, 60);
+    items = [...realModels(), ...(state.status?.config.virtual_models || []).map((v) => ({ id: v.name, owner: "路由组" }))].filter((m) => !exclude().has(lower(m.id)) && (!q || lower(m.id).includes(q) || lower(m.owner).includes(q))).slice(0, 60);
     const free = input.value.trim() && !state.modelInfo.has(q) && !exclude().has(q) ? input.value.trim() : "";
     list.replaceChildren(
       ...items.map((m, i) => h("div", { class: "picker-item" + (i === active ? " active" : ""), onmousedown: (e) => { e.preventDefault(); pick(m.id); } },
@@ -515,9 +517,22 @@ function capabilityWarnings(vm) {
   }
   return warns;
 }
+function groupPreview(vm, path = []) {
+  if (path.includes(lower(vm.name)) || path.length >= 8) return h("span", { class: "chip warn" }, "循环 / 深度超限");
+  const groups = state.status?.config.virtual_models || [];
+  const members = vm.strategy === "manual" ? vm.members.filter((m) => lower(m.model) === lower(vm.manual_member || "")) : vm.members;
+  return h("div", { style: "padding-left:12px;border-left:2px solid var(--border)" },
+    h("div", { class: "hint" }, vm.name + " · " + (STRATEGIES.find(([key]) => key === vm.strategy)?.[1] || vm.strategy) + " · 预计路径"),
+    members.map((m) => { const child = groups.find((g) => lower(g.name) === lower(m.model)); return child ? groupPreview(child, [...path, lower(vm.name)]) : h("div", { class: "mono" }, m.model + (cooldownOf(m.model) ? "（冷却）" : "")); }));
+}
 function attemptPreview(vm) {
+  if (vm.members.some((m) => isVirtual(m.model))) return [groupPreview(vm), h("span", { class: "hint" }, "子组保留自己的策略；此预览不推进轮换，执行时重新检查可用性。")];
   if (!vm.members.length) return [h("span", { class: "hint" }, "还没有成员")];
   const cooling = (m) => !!cooldownOf(m.model);
+  if (vm.strategy === "manual") {
+    const selected = vm.members.find((m) => lower(m.model) === lower(vm.manual_member || ""));
+    return [h("span", { class: "chip " + (!selected || cooling(selected) ? "warn" : "accent") }, selected ? "固定：" + selected.model + (cooling(selected) ? "（冷却中，返回错误，不切换）" : "（失败不切换）") : "尚未选择固定成员")];
+  }
   const avail = vm.members.filter((m) => !cooling(m));
   const parts = [];
   if (vm.strategy === "fallback") {
@@ -580,7 +595,8 @@ function renderEditor(view) {
       h("label", { class: "field" }, h("span", {}, "显示名称"), h("input", { type: "text", value: caps.display_name || "", oninput: (e) => { caps.display_name = e.target.value; } }))),
     h("h3", {}, "调度策略"),
     h("div", { class: "segmented" }, STRATEGIES.map(([v, label]) => h("button", { class: vm.strategy === v ? "active" : "", onclick: () => { vm.strategy = v; rerender(); } }, label))),
-    h("p", { class: "hint", style: "margin-top:6px" }, { fallback: "总是从第一个可用成员开始，失败再依次尝试后面的。适合 Agent：同一模型连续服务，提示词缓存不失效。", "round-robin": "每次请求从下一个成员开始，平均分摊负载。", random: "每次随机打乱成员顺序。", weighted: "按权重随机选第一个成员，其余作为后备。" }[vm.strategy]),
+    h("p", { class: "hint", style: "margin-top:6px" }, { manual: "固定选中成员；失败不切换其他成员，防换模和同成员重试仍生效。成员内部账号 / Key 由 CPA 路由。", fallback: "总是从第一个可用成员开始，失败再依次尝试后面的。适合 Agent：同一模型连续服务，提示词缓存不失效。", "round-robin": "每次请求从下一个成员开始，平均分摊负载。", random: "每次随机打乱成员顺序。", weighted: "按权重随机选第一个成员，其余作为后备。" }[vm.strategy]),
+    vm.strategy === "manual" ? h("label", { class: "field" }, h("span", {}, "固定成员（失败不切换；成员内部仍由 CPA 分配账号 / Key）"), h("select", { onchange: (e) => { vm.manual_member = e.target.value; rerender(); } }, h("option", { value: "", selected: !vm.manual_member }, "请选择成员"), vm.members.map((m) => h("option", { value: m.model, selected: vm.manual_member === m.model }, m.model)))) : null,
     h("h3", {}, "成员（" + vm.members.length + "）"),
     h("div", {}, vm.members.map(memberRow)),
     modelPicker({ placeholder: "+ 添加成员：搜索 cpa 中的模型，或输入名称后回车", exclude: () => new Set(vm.members.map((m) => lower(m.model)).concat([lower(vm.name)])), onPick: (id) => { vm.members.push({ model: id, weight: 1 }); rerender(); } }),
@@ -618,11 +634,20 @@ async function saveVirtual(e) {
   const list = cfg.virtual_models || [];
   if (!vm.name) return toast("请填写组合模型名称", true);
   if (!vm.members.length) return toast("至少需要一个成员", true);
+  if (vm.strategy === "manual" && !vm.members.some((m) => lower(m.model) === lower(vm.manual_member || ""))) return toast("手动策略必须选择一个当前成员", true);
   if (list.some((v, i) => i !== ed.index && lower(v.name) === lower(vm.name))) return toast("已存在同名组合模型", true);
   if (vm.members.some((m) => lower(m.model) === lower(vm.name))) return toast("成员不能是组合模型自身", true);
-  if (vm.members.some((m) => list.some((v) => lower(v.name) === lower(m.model)))) return toast("成员不能是另一个组合模型", true);
+  const graph = list.map((v, i) => i === ed.index ? vm : v);
+  if (ed.index < 0) graph.push(vm);
+  const visit = (name, path) => {
+    if (path.includes(lower(name))) throw new Error("路由组循环引用：" + [...path, name].join(" → "));
+    if (path.length >= 8) throw new Error("路由组嵌套不能超过 8 层");
+    const group = graph.find((g) => lower(g.name) === lower(name));
+    if (group) for (const m of group.members) if (graph.some((g) => lower(g.name) === lower(m.model))) visit(m.model, [...path, lower(name)]);
+  };
+  try { for (const g of graph) visit(g.name, []); } catch (e) { return toast(e.message, true); }
   const real = state.modelInfo.get(lower(vm.name));
-  if (real && real.owner !== cfg.provider && !confirm("cpa 中已有名为 " + vm.name + " 的真实模型，组合模型会覆盖它的请求路由。继续？")) return;
+  if (real && !list.some((g) => lower(g.name) === lower(vm.name)) && real.owner !== (cfg.provider || "orangeguard") && !confirm("cpa 中已有名为 " + vm.name + " 的真实模型，组合模型会覆盖它的请求路由。继续？")) return;
   if (ed.index >= 0) list[ed.index] = vm; else list.push(vm);
   cfg.virtual_models = list;
   e.target.disabled = true;

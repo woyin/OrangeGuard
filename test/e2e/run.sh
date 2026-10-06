@@ -9,8 +9,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 PLUGIN="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
 WORK="$ROOT/test/e2e/.work"
-CPA_PORT=18317
-MOCK_PORT=18080
+CPA_PORT=${CPA_PORT:-18317}
+MOCK_PORT=${MOCK_PORT:-18080}
 GOOS="$(go env GOOS)"
 GOARCH="$(go env GOARCH)"
 
@@ -18,7 +18,8 @@ mkdir -p "$WORK/plugins/$GOOS/$GOARCH" "$WORK/auth"
 cp "$PLUGIN" "$WORK/plugins/$GOOS/$GOARCH/"
 
 CPA_VERSION="$(cd "$ROOT" && go list -m -f '{{.Version}}' github.com/router-for-me/CLIProxyAPI/v7)"
-if [ ! -x "$WORK/cpa-$CPA_VERSION" ]; then
+CPA_BINARY=${CPA_BINARY:-"$WORK/cpa-$CPA_VERSION"}
+if [ ! -x "$CPA_BINARY" ]; then
   echo "building CLIProxyAPI $CPA_VERSION ..."
   SRC="$(cd "$ROOT" && go mod download -json "github.com/router-for-me/CLIProxyAPI/v7@$CPA_VERSION" | python3 -c 'import json,sys; print(json.load(sys.stdin)["Dir"])')"
   rm -rf "$WORK/cpa-src" && cp -r "$SRC" "$WORK/cpa-src" && chmod -R u+w "$WORK/cpa-src"
@@ -58,6 +59,12 @@ plugins:
           - model: "gpt-6-astra"
           - model: "flaky"
       virtual_models:
+        - name: "nested"
+          strategy: manual
+          manual_member: "smart"
+          members:
+            - model: "smart"
+            - model: "quota-model"
         - name: "smart"
           strategy: fallback
           members:
@@ -73,7 +80,7 @@ EOF
 
 python3 "$ROOT/test/e2e/mock_upstream.py" "$MOCK_PORT" 2> "$WORK/upstream.log" &
 MOCK_PID=$!
-"$WORK/cpa-$CPA_VERSION" -config "$WORK/config.yaml" > "$WORK/cpa.log" 2>&1 &
+"$CPA_BINARY" -config "$WORK/config.yaml" > "$WORK/cpa.log" 2>&1 &
 CPA_PID=$!
 trap 'kill $MOCK_PID $CPA_PID 2>/dev/null || true' EXIT
 
@@ -123,6 +130,18 @@ check "management page served" "<title>OrangeGuard</title>" \
 check "monitor saw the downgrade" '"last_mismatch_as":"gpt-5.5-mini"' \
   "$(mgmt "http://127.0.0.1:$CPA_PORT/v0/management/plugins/orangeguard/status")"
 
+check "nested manual preserves child fallback" '"model": "good-model"' "$(chat nested false)"
+check "nested streaming preserves child fallback" '"model": "good-model"' "$(chat nested true)"
+check "nested responses protocol" 'hello from good-model' \
+  "$(curl -s "http://127.0.0.1:$CPA_PORT/v1/responses" -H 'Authorization: Bearer test-key' -H 'Content-Type: application/json' -d '{"model":"nested","input":"hi"}')"
+check "nested gemini protocol" 'hello from good-model' \
+  "$(curl -s "http://127.0.0.1:$CPA_PORT/v1beta/models/nested:generateContent?key=test-key" -H 'Content-Type: application/json' -d '{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}')"
+check "nested responses stream" 'hello from good-model' \
+  "$(curl -s "http://127.0.0.1:$CPA_PORT/v1/responses" -H 'Authorization: Bearer test-key' -H 'Content-Type: application/json' -d '{"model":"nested","input":"hi","stream":true}')"
+check "nested gemini stream" 'hello from good-model' \
+  "$(curl -s "http://127.0.0.1:$CPA_PORT/v1beta/models/nested:streamGenerateContent?alt=sse&key=test-key" -H 'Content-Type: application/json' -d '{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}')"
+check "nested anthropic stream" 'hello from good-model' \
+  "$(curl -s "http://127.0.0.1:$CPA_PORT/v1/messages" -H 'x-api-key: test-key' -H 'anthropic-version: 2023-06-01' -H 'Content-Type: application/json' -d '{"model":"nested","max_tokens":50,"stream":true,"messages":[{"role":"user","content":"hi"}]}')"
 echo "--- upstream calls"; cat "$WORK/upstream.log"
 if [ "$FAILED" -ne 0 ]; then echo "--- cpa log (orangeguard)"; grep -i orangeguard "$WORK/cpa.log" || true; exit 1; fi
 echo "all e2e checks passed"

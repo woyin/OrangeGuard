@@ -4,6 +4,7 @@ package engine
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -29,14 +30,18 @@ const maxConcurrentExecutions = 256
 
 // Request is the client request the executor was asked to run.
 type Request struct {
-	CallbackID   string
-	SourceFormat string
-	Format       string
-	Model        string
-	Alt          string
-	Body         []byte
-	Headers      http.Header
-	Query        url.Values
+	CallbackID     string
+	SourceFormat   string
+	Format         string
+	Model          string
+	Alt            string
+	Body           []byte
+	Headers        http.Header
+	Query          url.Values
+	execution      *executionState
+	budgets        []*attemptBudget
+	groupPath      []string
+	inheritedGuard bool
 }
 
 // Response is a completed non-streaming upstream response.
@@ -188,15 +193,33 @@ func (e *Engine) buildPlan(cfg config.Config, requested string) (plan, *Failure)
 	p.virtual = true
 	p.failoverClient = vm.FailoverOnClientError
 	ordered := e.order(vm)
+	if vm.Strategy == config.StrategyManual && len(ordered) == 0 {
+		return p, &Failure{Status: http.StatusBadRequest, Code: "manual_member_invalid", Message: "orangeguard: manual selection is missing or invalid"}
+	}
 	var available, cooling []target
 	coolingUntil := map[string]time.Time{}
 	for _, m := range ordered {
 		t := target{model: m.Model, tries: 1 + m.MaxRetries}
+		if _, child := cfg.FindVirtual(m.Model); child {
+			ready, until := e.availability(cfg, m.Model, nil)
+			if !ready {
+				coolingUntil[strings.ToLower(m.Model)] = until
+				cooling = append(cooling, t)
+				p.skipped = append(p.skipped, m.Model)
+			} else {
+				available = append(available, t)
+			}
+			continue
+		}
 		switch {
 		case len(m.Expect) > 0 || len(m.Deny) > 0:
+			deny := append([]string(nil), m.Deny...)
+			if rule, ok := cfg.FindGuard(m.Model); ok {
+				deny = append(deny, rule.Deny...)
+			}
 			t.expect = &detect.Expectation{
 				Accept:        m.Expect,
-				Deny:          m.Deny,
+				Deny:          deny,
 				Default:       m.Model,
 				RejectMissing: cfg.Guard.OnMissingModel == config.MissingModelReject,
 			}
@@ -220,6 +243,9 @@ func (e *Engine) buildPlan(cfg config.Config, requested string) (plan, *Failure)
 	}
 
 	if len(available) == 0 {
+		if vm.Strategy == config.StrategyManual {
+			return p, &Failure{Status: http.StatusTooManyRequests, Code: "manual_member_cooling_down", Message: fmt.Sprintf("orangeguard: selected member %q is cooling down; manual routing does not switch members", ordered[0].Model)}
+		}
 		sort.SliceStable(cooling, func(i, j int) bool {
 			return coolingUntil[strings.ToLower(cooling[i].model)].Before(coolingUntil[strings.ToLower(cooling[j].model)])
 		})
@@ -261,6 +287,13 @@ func (e *Engine) order(vm config.VirtualModel) []config.Member {
 	members := append([]config.Member(nil), vm.Members...)
 	n := len(members)
 	switch vm.Strategy {
+	case config.StrategyManual:
+		for _, m := range members {
+			if strings.EqualFold(m.Model, strings.TrimSpace(vm.ManualMember)) {
+				return []config.Member{m}
+			}
+		}
+		return nil
 	case config.StrategyRoundRobin:
 		counter, _ := e.counters.LoadOrStore(strings.ToLower(vm.Name), new(atomic.Uint64))
 		start := int((counter.(*atomic.Uint64).Add(1) - 1) % uint64(n))
@@ -300,7 +333,11 @@ func (e *Engine) Execute(req Request) (Response, *Failure) {
 	e.active.Add(1)
 	defer e.active.Add(-1)
 
-	cfg := e.Config()
+	req, stateFailure := e.prepareExecution(req)
+	if stateFailure != nil {
+		return Response{}, stateFailure
+	}
+	cfg := req.execution.cfg
 	p, failure := e.buildPlan(cfg, req.Model)
 	if failure != nil {
 		e.logf(req.CallbackID, "warn", "all members cooling down | requested=%s", req.Model)
@@ -311,18 +348,41 @@ func (e *Engine) Execute(req Request) (Response, *Failure) {
 	attempts := 0
 	var last *Failure
 	for _, t := range p.targets {
-		body := bodyFor(req.Body, req.Model, t.model)
+		if _, child := cfg.FindVirtual(t.model); child {
+			childReq := req
+			childReq.Model = t.model
+			resp, f := e.Execute(childReq)
+			if f == nil {
+				return resp, nil
+			}
+			if terminalGroupFailure(f) || !detect.Classify(f.Status, f.Message).Failover(p.failoverClient) {
+				return Response{}, f
+			}
+			last = f
+			continue
+		}
+		if req.inheritedGuard && t.expect == nil {
+			t.expect = &detect.Expectation{Default: t.model, RejectMissing: cfg.Guard.OnMissingModel == config.MissingModelReject}
+		}
+		body := bodyFor(req.Body, req.execution.root, t.model)
 		mismatch := ""
 		for try := 0; try < t.tries && attempts < p.maxAttempts; try++ {
 			if try > 0 && p.retryDelay > 0 {
 				e.sleep(p.retryDelay)
 			}
+			if f := req.consumeAttempt(); f != nil {
+				return Response{}, f
+			}
 			attempts++
+			e.logf(req.CallbackID, "info", "routing attempt | requested=%s group_path=%s leaf=%s remaining=%d transport=non-stream", req.execution.root, strings.Join(req.groupPath, " -> "), t.model, req.execution.remaining)
 			resp, errExec := e.host.Execute(req, t.model, body)
 			if errExec == nil && resp.Status >= http.StatusBadRequest {
 				errExec = &UpstreamError{Status: resp.Status, Message: string(resp.Body)}
 			}
 			if errExec != nil {
+				if errors.Is(errExec, context.Canceled) || errors.Is(errExec, context.DeadlineExceeded) {
+					return Response{}, &Failure{Status: 499, Code: "request_cancelled", Message: errExec.Error()}
+				}
 				f, kind := e.recordError(req, cfg, t.model, errExec, attempts)
 				// Upstream errors on a directly requested model are passed
 				// through untouched; only virtual models fail over.
@@ -355,6 +415,13 @@ func (e *Engine) Execute(req Request) (Response, *Failure) {
 			break
 		}
 	}
+	if len(req.groupPath) > 1 {
+		for _, budget := range req.budgets {
+			if budget.remaining == 0 {
+				return Response{}, &Failure{Status: 502, Code: "attempt_budget_exhausted", Message: "orangeguard: nested attempt budget exhausted"}
+			}
+		}
+	}
 	return Response{}, e.finalFailure(req, p, last, attempts)
 }
 
@@ -382,7 +449,11 @@ func (e *Engine) ExecuteStream(req Request, sink Sink) error {
 	e.active.Add(1)
 	defer e.active.Add(-1)
 
-	cfg := e.Config()
+	req, stateFailure := e.prepareExecution(req)
+	if stateFailure != nil {
+		return stateFailure
+	}
+	cfg := req.execution.cfg
 	p, failure := e.buildPlan(cfg, req.Model)
 	if failure != nil {
 		e.logf(req.CallbackID, "warn", "all members cooling down | requested=%s", req.Model)
@@ -393,17 +464,45 @@ func (e *Engine) ExecuteStream(req Request, sink Sink) error {
 	attempts := 0
 	var last *Failure
 	for _, t := range p.targets {
-		body := bodyFor(req.Body, req.Model, t.model)
+		if _, child := cfg.FindVirtual(t.model); child {
+			childReq := req
+			childReq.Model = t.model
+			err := e.ExecuteStream(childReq, sink)
+			if err == nil {
+				return nil
+			}
+			if req.execution.committed {
+				return err
+			}
+			f, ok := err.(*Failure)
+			if !ok {
+				return err
+			}
+			if terminalGroupFailure(f) || !detect.Classify(f.Status, f.Message).Failover(p.failoverClient) {
+				return err
+			}
+			last = f
+			continue
+		}
+		if req.inheritedGuard && t.expect == nil {
+			t.expect = &detect.Expectation{Default: t.model, RejectMissing: cfg.Guard.OnMissingModel == config.MissingModelReject}
+		}
+		body := bodyFor(req.Body, req.execution.root, t.model)
 		mismatch := ""
 	tries:
 		for try := 0; try < t.tries && attempts < p.maxAttempts; try++ {
 			if try > 0 && p.retryDelay > 0 {
 				e.sleep(p.retryDelay)
 			}
+			if f := req.consumeAttempt(); f != nil {
+				return f
+			}
 			attempts++
+			e.logf(req.CallbackID, "info", "routing attempt | requested=%s group_path=%s leaf=%s remaining=%d transport=stream", req.execution.root, strings.Join(req.groupPath, " -> "), t.model, req.execution.remaining)
 			outcome, actual, errAttempt := e.streamOnce(req, t, body, sink)
 			switch outcome {
 			case streamDelivered:
+				req.execution.committed = true
 				if errAttempt != nil {
 					// Already committed: the client has partial output, so the
 					// only honest option is to end the stream with the error.
@@ -429,6 +528,9 @@ func (e *Engine) ExecuteStream(req Request, sink Sink) error {
 					req.Model, t.model, mismatch, try+1, t.tries)
 				continue
 			case streamFailed:
+				if errors.Is(errAttempt, context.Canceled) || errors.Is(errAttempt, context.DeadlineExceeded) {
+					return &Failure{Status: 499, Code: "request_cancelled", Message: errAttempt.Error()}
+				}
 				f, kind := e.recordError(req, cfg, t.model, errAttempt, attempts)
 				if !p.virtual || !kind.Failover(p.failoverClient) {
 					return f
@@ -443,6 +545,13 @@ func (e *Engine) ExecuteStream(req Request, sink Sink) error {
 		}
 		if attempts >= p.maxAttempts {
 			break
+		}
+	}
+	if len(req.groupPath) > 1 {
+		for _, budget := range req.budgets {
+			if budget.remaining == 0 {
+				return &Failure{Status: 502, Code: "attempt_budget_exhausted", Message: "orangeguard: nested attempt budget exhausted"}
+			}
 		}
 	}
 	return e.finalFailure(req, p, last, attempts)

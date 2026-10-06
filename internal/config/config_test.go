@@ -25,7 +25,6 @@ virtual_models:
       - model: gpt-6-astra
       - model: claude-opus-5
         weight: 0
-      - model: smart
       - model: gpt-6-astra
     capabilities:
       context_length: 200000
@@ -42,13 +41,13 @@ func TestParse(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(warnings) == 0 {
-		t.Fatal("expected warnings for self-reference, duplicate, nesting and empty name")
+		t.Fatal("expected warnings for duplicate and empty name")
 	}
 	if cfg.Provider != DefaultProvider || cfg.Cooldown.QuotaSeconds != 3600 || cfg.Cooldown.RateLimitSeconds != 60 {
 		t.Fatalf("defaults not merged: %+v", cfg.Cooldown)
 	}
-	if len(cfg.VirtualModels) != 1 {
-		t.Fatalf("want 1 virtual model, got %d", len(cfg.VirtualModels))
+	if len(cfg.VirtualModels) != 2 {
+		t.Fatalf("want 2 virtual models including nested group, got %d", len(cfg.VirtualModels))
 	}
 	vm := cfg.VirtualModels[0]
 	if vm.Strategy != StrategyRoundRobin || len(vm.Members) != 2 || vm.Members[1].Weight != 1 {
