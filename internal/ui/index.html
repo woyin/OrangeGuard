@@ -35,7 +35,9 @@ main { max-width: 1180px; margin: 0 auto; padding: 18px 20px 60px; }
 .panel h3 { margin: 18px 0 8px; font-size: 14px; }
 .hint { color: var(--muted); font-size: 13px; margin: 0 0 12px; }
 .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; align-items: end; }
+.grid > .field { min-width: 0; }
+.grid > .field > input, .grid > .field > select { width: 100%; }
 label.field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
 label.field > span { font-weight: 500; }
 input[type=text], input[type=number], input[type=password], select, textarea { border: 1px solid var(--border); background: var(--panel); border-radius: 8px; padding: 7px 10px; min-width: 0; width: 100%; color: var(--text); }
@@ -253,17 +255,23 @@ async function loadModels() {
     ]);
     for (const m of (openai && openai.data) || []) {
       if (!m || !m.id) continue;
-      state.modelInfo.set(lower(m.id), { id: m.id, owner: m.owned_by || "" });
+      state.modelInfo.set(lower(m.id), { id: m.id, owner: m.owned_by || "", capabilities: readModelCapabilities(m) });
     }
     for (const m of (gemini && gemini.models) || []) {
       const id = String(m.name || "").replace(/^models\//, "");
       if (!id) continue;
       const info = state.modelInfo.get(lower(id)) || { id, owner: "" };
-      info.context = m.inputTokenLimit || 0;
-      info.output = m.outputTokenLimit || 0;
-      info.inputModalities = (m.supportedInputModalities || []).map(lower);
+      info.capabilities = { ...(info.capabilities || {}), ...readModelCapabilities(m) };
+      info.context = info.capabilities.context_length || info.capabilities.input_token_limit || 0;
+      info.output = info.capabilities.max_output_tokens || 0;
+      info.inputModalities = info.capabilities.input_modalities || [];
       info.display = m.displayName && m.displayName !== id ? m.displayName : "";
       state.modelInfo.set(lower(id), info);
+    }
+    for (const info of state.modelInfo.values()) {
+      info.context = info.capabilities?.context_length || info.capabilities?.input_token_limit || 0;
+      info.output = info.capabilities?.max_output_tokens || 0;
+      info.inputModalities = info.capabilities?.input_modalities || [];
     }
     state.models = [...state.modelInfo.values()].sort((a, b) => a.id.localeCompare(b.id));
     if (!state.models.length) state.modelsError = "未能读取模型列表；可直接输入模型名。";
@@ -422,6 +430,40 @@ function openEditor(index) {
   state.editing = { index, vm, original: index >= 0 ? cfg.virtual_models[index].name : "" };
   render();
 }
+// Copy only reported fields; never infer capabilities from a model's name.
+function readModelCapabilities(m) {
+  const caps = {};
+  const fields = {
+    display_name: ["display_name", "displayName"], description: ["description"],
+    owned_by: ["owned_by"], type: ["type"],
+    context_length: ["context_length"], input_token_limit: ["input_token_limit", "inputTokenLimit"],
+    max_output_tokens: ["max_output_tokens", "outputTokenLimit"],
+    input_modalities: ["input_modalities", "supportedInputModalities"],
+    output_modalities: ["output_modalities", "supportedOutputModalities"],
+    supported_parameters: ["supported_parameters"],
+    generation_methods: ["generation_methods", "supportedGenerationMethods"],
+    thinking: ["thinking"], vision: ["vision"],
+  };
+  for (const [target, sources] of Object.entries(fields)) {
+    for (const source of sources) {
+      if (m[source] !== undefined && m[source] !== null) {
+        caps[target] = clone(m[source]);
+        break;
+      }
+    }
+  }
+  if (!caps.context_length && caps.input_token_limit) caps.context_length = caps.input_token_limit;
+  if (caps.input_modalities) caps.vision = caps.input_modalities.some((mo) => lower(mo) === "image");
+  return caps;
+}
+function copyModelCapabilities(vm, id) {
+  const caps = state.modelInfo.get(lower(id))?.capabilities;
+  if (!caps || !Object.keys(caps).length) return "CPA 未提供该模型的能力信息，未修改组合配置。";
+  // Replace, rather than merge, to avoid retaining another model's capabilities.
+  vm.capabilities = clone(caps);
+  const missing = ["context_length", "max_output_tokens", "input_modalities", "output_modalities", "supported_parameters", "thinking"].filter((key) => caps[key] === undefined);
+  return "已复制 " + id + " 的已上报能力；未修改名称、成员或调度策略。" + (missing.length ? " 未上报（请确认）：" + missing.join("、") : "");
+}
 function deriveCapabilities(vm) {
   const infos = vm.members.map((m) => state.modelInfo.get(lower(m.model)));
   const known = infos.filter(Boolean);
@@ -492,6 +534,7 @@ function renderEditor(view) {
         h("label", { class: "check", title: "检测到降级后，在该成员上额外重试的次数" }, "重试", h("input", { type: "number", min: "0", value: m.max_retries || 0, oninput: (e) => { m.max_retries = Math.max(0, parseInt(e.target.value) || 0); } }))),
       h("div", { class: "ctl" }, cooldownChip(m.model), cooldownOf(m.model) ? h("button", { class: "btn small", onclick: () => resetCooldown(m.model) }, "解除") : null),
       h("div", { class: "ctl" },
+        h("button", { class: "btn small", title: "将此模型已上报的能力复制到组合；不修改名称或调度策略", onclick: () => { const message = copyModelCapabilities(vm, m.model); rerender(); toast(message, "warn"); } }, "复制能力"),
         h("button", { class: "btn small", title: "上移", disabled: i === 0, onclick: () => { [vm.members[i - 1], vm.members[i]] = [vm.members[i], vm.members[i - 1]]; rerender(); } }, "↑"),
         h("button", { class: "btn small", title: "下移", disabled: i === vm.members.length - 1, onclick: () => { [vm.members[i + 1], vm.members[i]] = [vm.members[i], vm.members[i + 1]]; rerender(); } }, "↓"),
         h("button", { class: "btn small danger", title: "移除", onclick: () => { vm.members.splice(i, 1); rerender(); } }, "✕")));
@@ -523,7 +566,7 @@ function renderEditor(view) {
     h("h3", {}, "下一个请求的尝试顺序"),
     h("div", { class: "preview" }, attemptPreview(vm)),
     h("h3", {}, "对外声明的能力"),
-    h("p", { class: "hint" }, "客户端和 Agent 只看到组合模型名，靠这里的能力判断上下文长度、是否多模态。建议取所有成员的最小公共能力。"),
+    h("p", { class: "hint" }, "客户端和 Agent 只看到组合模型名，靠这里的能力判断上下文长度、是否多模态。建议取所有成员的最小公共能力。同型号多渠道组合可点击成员旁的“复制能力”，按该模型已上报的信息一键填写；未知字段不会猜测，复制后需保存。"),
     h("div", { class: "row" }, h("button", { class: "btn", disabled: !vm.members.length, onclick: () => { const notes = deriveCapabilities(vm); rerender(); if (notes.length) toast(notes.join(" "), "warn"); else toast("已按成员的最小公共能力填写"); } }, "从成员推导"), notesBox),
     h("div", { class: "grid", style: "margin-top:10px" },
       h("label", { class: "field" }, h("span", {}, "上下文长度（token）"), num("context_length", "例如 200000")),
@@ -596,7 +639,7 @@ function renderGuard() {
     if (state.onlyMismatch) list = list.filter((x) => x.stat && x.stat.mismatches);
     list.sort((a, b) => ((b.stat?.mismatches || 0) - (a.stat?.mismatches || 0)) || ((b.stat?.requests || 0) - (a.stat?.requests || 0)) || a.id.localeCompare(b.id));
     return list.map(({ id, rule, stat }) => h("tr", {},
-      h("td", {}, h("div", { class: "mono" }, id), ...(stat?.aliases || []).map((alias) => h("div", { class: "hint mono" }, "客户端请求名：" + alias)), h("div", { class: "row" }, modelMeta(id))),
+      h("td", {}, h("div", { class: "mono" }, id), ...(stat?.executed_models || []).filter((model) => lower(model) !== lower(id)).map((model) => h("div", { class: "hint mono" }, "CPA 执行模型：" + model)), h("div", { class: "row" }, modelMeta(id))),
       h("td", {}, rule ? h("span", { class: "chip accent", title: "规则 " + rule.model }, "受保护 · " + rule.model) : h("span", { class: "chip" }, "仅监控")),
       h("td", { class: "num" }, stat ? stat.requests : "—"),
       h("td", { class: "num" }, stat && stat.reported ? h("span", { class: "chip " + (stat.mismatches ? "bad" : "ok") }, (100 * stat.mismatch_rate).toFixed(stat.mismatches ? 1 : 0) + "%") : "—"),

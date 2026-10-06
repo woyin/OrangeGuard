@@ -19,7 +19,7 @@ const (
 	maxServedModels = 8
 )
 
-// Recorder aggregates usage per upstream model.
+// Recorder aggregates usage per client-facing request name.
 type Recorder struct {
 	mu     sync.Mutex
 	models map[string]*entry
@@ -30,6 +30,7 @@ type Recorder struct {
 type entry struct {
 	model        string
 	aliases      map[string]struct{}
+	executed     map[string]struct{}
 	requests     int64
 	failed       int64
 	reported     int64 // successful responses that named a model
@@ -46,10 +47,11 @@ type ServedCount struct {
 	Count int64  `json:"count"`
 }
 
-// Stat is the read-only view of one upstream model.
+// Stat is the read-only view of one client-facing request name.
 type Stat struct {
 	Model          string        `json:"model"`
 	Aliases        []string      `json:"aliases,omitempty"`
+	ExecutedModels []string      `json:"executed_models,omitempty"`
 	Requests       int64         `json:"requests"`
 	Failed         int64         `json:"failed"`
 	Reported       int64         `json:"reported"`
@@ -79,7 +81,11 @@ func (r *Recorder) Record(model, alias, served string, failed bool) {
 	}
 	alias = strings.TrimSpace(alias)
 	served = strings.TrimSpace(served)
-	key := strings.ToLower(model)
+	requestName := model
+	if alias != "" {
+		requestName = alias
+	}
+	key := strings.ToLower(requestName)
 	now := r.now()
 
 	r.mu.Lock()
@@ -89,11 +95,12 @@ func (r *Recorder) Record(model, alias, served string, failed bool) {
 		if len(r.models) >= maxModels {
 			r.evictOldest()
 		}
-		e = &entry{model: model, aliases: map[string]struct{}{}, served: map[string]int64{}}
+		e = &entry{model: requestName, aliases: map[string]struct{}{}, executed: map[string]struct{}{}, served: map[string]int64{}}
 		r.models[key] = e
 	}
 	e.requests++
 	e.lastSeen = now
+	e.executed[model] = struct{}{}
 	if alias != "" && !strings.EqualFold(alias, model) {
 		e.aliases[alias] = struct{}{}
 	}
@@ -167,6 +174,10 @@ func (r *Recorder) Snapshot() []Stat {
 			st.Aliases = append(st.Aliases, alias)
 		}
 		sort.Strings(st.Aliases)
+		for model := range e.executed {
+			st.ExecutedModels = append(st.ExecutedModels, model)
+		}
+		sort.Strings(st.ExecutedModels)
 		for name, count := range e.served {
 			st.Served = append(st.Served, ServedCount{Model: name, Count: count})
 		}

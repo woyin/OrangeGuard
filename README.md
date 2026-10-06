@@ -182,7 +182,7 @@ plugins:
 |---|---|---|
 | `enabled` | `true` | 根据 cpa 用量记录统计每个上游模型：请求数、失败数、实际处理的模型及次数、降级率、最近一次降级 |
 
-统计只在内存中，cpa 重启后清零，最多记录 1000 个模型，每个模型保留最常见的 8 个实际模型名。监控以 cpa 用量记录的 `Model`（执行模型）聚合，页面同时显示 cpa 提供的 `Alias`（客户端请求名）。例如执行模型 `gpt-6.1-sol`、客户端请求名 `openai/gpt-6.1-sol`、响应声明 `gpt-6.1-sol` 是三个不同角色，不能混为一谈；比较时去命名空间不会改写请求路由或响应。若宿主未提供原始别名，监控无法仅从用量记录还原它。
+统计只在内存中，cpa 重启后清零，最多记录 1000 个模型，每个模型保留最常见的 8 个实际模型名。监控以 cpa 用量记录的 `Alias`（完整客户端请求名）聚合；没有 `Alias` 时才使用 `Model`。例如请求 `openai/gpt-6.1-sol` 的统计归到该完整名称，不会归到另一个 `gpt-6.1-sol` 模型。页面另行标注 cpa 的执行模型名，实际响应声明仍原样显示；不同渠道前缀的请求统计不合并。比较时去命名空间不会改写请求路由或响应。若宿主未提供原始别名，监控无法仅从用量记录还原它。
 
 处理模型的读取位置：OpenAI Chat Completions、DeepSeek、GLM 的 JSON / SSE 顶层 `model`；Claude（含 DeepSeek Anthropic 兼容接口）的 `model` / `message_start.message.model`；OpenAI Responses 的非流式 `model` / 流式 `response.model`；Gemini 的 `modelVersion`（支持 JSON 数组流）。不把生成内容、`system_fingerprint`、`usage` 或任意深层 `model` 当作模型证据。读取的是 cpa 翻译后返回给客户端格式的响应，翻译可能丢失原始信息。
 

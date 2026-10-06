@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.0
+
+- Attribute monitoring statistics to the complete client request name supplied by CPA (`Alias`), falling back to the executed model only when no alias is supplied. Keep different routing namespaces separate.
+- Show CPA execution model metadata separately without rewriting the response's reported model identity.
+- Align form controls when adjacent labels wrap onto multiple lines.
+- Add a per-member “复制能力” button to replace combo capabilities with that model's reported metadata, preserving combo routing/name and warning about missing fields instead of guessing model capabilities.
+- Read available capability metadata from both OpenAI and Gemini model-list responses.
+- Add regression tests for all README identity examples and independent request-namespace statistics.
+- Advertise version `0.5.0` in the CPA registry as well as the build version.
+
 ## 0.3.0
 
 - Fix false model-substitution alarms when both request and response carry different routing/provider namespaces, e.g. `cline-pass/deepseek-v4.1-flash` → `deepseek/deepseek-v4.1-flash`.
